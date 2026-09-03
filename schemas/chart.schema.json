@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Magiqych/chart-forge/schemas/chart.schema.json",
+  "title": "Chart Forge Chart",
+  "description": "A playable rhythm-game chart: the notes a human author decided to place, and the timing information needed to play them back. This is the Editor's output and the Player's input. A Chart Note is a gameplay object and is a different concept from an Analysis Event, which is an observation about the audio. A chart never contains analysis data. All time values are in seconds from the start of the audio unless stated otherwise. The core model is game-neutral; anything specific to a particular game belongs under 'extensions'.",
+  "type": "object",
+  "required": ["version", "audio", "timing", "playfield", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Version of the Chart document format (semantic versioning).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "metadata": {
+      "description": "Descriptive information about the chart and the song it belongs to.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "title": { "type": "string" },
+        "artist": { "type": "string" },
+        "charter": {
+          "description": "Who authored this chart.",
+          "type": "string"
+        },
+        "difficulty": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "Open vocabulary label such as debut, regular, pro, master.",
+              "type": "string"
+            },
+            "level": {
+              "description": "Numeric difficulty rating, if the target game uses one.",
+              "type": "number"
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "modifiedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "audio": {
+      "description": "The audio this chart is played against. Referenced, never embedded.",
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "timing": {
+      "description": "How chart time relates to audio time and to musical time. A Player needs only 'offsetSec' and note times to play the chart; the tempo information exists so an Editor can draw a beat grid and so patterns can be expressed musically.",
+      "type": "object",
+      "required": ["offsetSec"],
+      "additionalProperties": false,
+      "properties": {
+        "offsetSec": {
+          "description": "Time in the audio at which musical time zero (bar 1, beat 1) occurs. May be negative if the first downbeat precedes the audio.",
+          "type": "number"
+        },
+        "bpm": {
+          "description": "Base tempo of the chart.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bpmChanges": {
+          "description": "Tempo changes in ascending time order. The chart's tempo is the base 'bpm' until the first change.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["timeSec", "bpm"],
+            "additionalProperties": false,
+            "properties": {
+              "timeSec": { "$ref": "#/$defs/timeSec" },
+              "bpm": { "type": "number", "exclusiveMinimum": 0 },
+              "beatsPerBar": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "beatsPerBar": {
+          "description": "Base time signature numerator, used for the beat grid.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "playfield": {
+      "description": "The geometry the notes are placed on. Kept explicit rather than implied by a game name, so that the generic model stays independent of any particular game.",
+      "type": "object",
+      "required": ["laneCount"],
+      "additionalProperties": false,
+      "properties": {
+        "laneCount": {
+          "description": "Number of lanes. Lane indices in notes run from 0 to laneCount - 1, left to right.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "profile": {
+          "description": "Name of the gameplay profile this chart targets. 'generic' uses only the core model. Any other value implies a matching entry under 'extensions' and must not change the meaning of core fields.",
+          "type": "string",
+          "default": "generic",
+          "examples": ["generic", "deresute"]
+        }
+      }
+    },
+    "notes": {
+      "description": "The notes of the chart, in ascending 'timeSec' order.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/chartNote" }
+    },
+    "extensions": {
+      "description": "Namespace for game-specific data, keyed by profile name (for example an object under the key 'deresute'). The core model above must remain meaningful when every extension is ignored, and a Player that does not understand an extension must still be able to play the chart.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Identifier unique within this document. Stable across edits so that other documents can refer to a note.",
+      "type": "string",
+      "minLength": 1
+    },
+    "timeSec": {
+      "description": "Time in seconds from the start of the audio.",
+      "type": "number",
+      "minimum": 0
+    },
+    "chartNote": {
+      "type": "object",
+      "required": ["id", "type", "timeSec", "lane"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": {
+          "description": "Gameplay kind of the note. 'tap' is a single hit; 'hold' is held from 'timeSec' to 'endTimeSec'; 'flick' is a directional swipe; 'slide' is a hold whose lane may move, using 'endLane'. Open vocabulary; a Player that meets an unknown type should report it rather than guess.",
+          "type": "string",
+          "examples": ["tap", "hold", "flick", "slide"]
+        },
+        "timeSec": {
+          "description": "When the note must be hit.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "lane": {
+          "description": "Lane the note starts in, 0-based from the left, less than playfield.laneCount.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "endTimeSec": {
+          "description": "When a held note is released. Required in practice for 'hold' and 'slide'; absent for instantaneous notes. Must be greater than 'timeSec'.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "endLane": {
+          "description": "Lane the note ends in, when it moves across lanes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "direction": {
+          "description": "Swipe direction for directional notes such as flicks.",
+          "type": "string",
+          "enum": ["left", "right", "up", "down", "upLeft", "upRight", "downLeft", "downRight"]
+        },
+        "sourceEventId": {
+          "description": "Optional provenance: the id of the Analysis Event the author was looking at when placing this note. It is a human-authored back-reference for tooling and re-analysis, never a claim that the note was generated from the event, and a Player must ignore it.",
+          "type": "string"
+        },
+        "metadata": {
+          "description": "Author or tool specific extra data. A Player must be able to play the note while ignoring this.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

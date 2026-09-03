@@ -1,0 +1,133 @@
+# ---------------------------------------------------------------------------
+# Chart Forge .gitignore
+#
+# This project will likely involve Python (Analyzer), Node.js (Editor/Player),
+# Windows development machines, and audio processing. Large audio and generated
+# artefacts must never enter the repository.
+#
+# Small fixtures for examples/ and tests/ are explicitly re-included at the
+# bottom of this file.
+# ---------------------------------------------------------------------------
+
+# --- Audio / media ---------------------------------------------------------
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.opus
+*.m4a
+*.aac
+*.aiff
+*.aif
+*.wma
+*.mp4
+*.mkv
+
+# Separated stems and other analysis byproducts
+stems/
+separated/
+*.stem.*
+
+# Analyzer caches / heavy intermediate artefacts
+cache/
+.cache/
+*.npy
+*.npz
+*.h5
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.safetensors
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# --- Node.js ---------------------------------------------------------------
+node_modules/
+.npm/
+.yarn/
+.pnp.*
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+.parcel-cache/
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+coverage/
+
+# --- Build output ----------------------------------------------------------
+dist/
+build/
+out/
+target/
+*.tsbuildinfo
+
+# --- Environment / secrets -------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Editors / IDE ---------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS --------------------------------------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+# macOS / Linux
+.DS_Store
+._*
+.Trash-*
+
+# --- Local scratch ---------------------------------------------------------
+tmp/
+temp/
+scratch/
+*.log
+
+# ---------------------------------------------------------------------------
+# Re-included fixtures
+#
+# Small sample assets used by the examples and the contract tests are allowed.
+# Keep them tiny (a few seconds / a few hundred KB at most); anything larger
+# belongs outside the repository.
+# ---------------------------------------------------------------------------
+!examples/fixtures/
+!examples/fixtures/**
+!tests/fixtures/
+!tests/fixtures/**

@@ -1,0 +1,63 @@
+{
+  "version": "0.1.0",
+  "metadata": {
+    "title": "Example Song",
+    "artist": "Unknown",
+    "charter": "example",
+    "difficulty": { "name": "regular", "level": 12 },
+    "createdAt": "2026-01-01T00:00:00Z",
+    "modifiedAt": "2026-01-01T00:00:00Z"
+  },
+  "audio": {
+    "path": "../examples/fixtures/example-song.wav",
+    "durationSec": 8.0
+  },
+  "timing": {
+    "offsetSec": 0.0,
+    "bpm": 120.0,
+    "beatsPerBar": 4
+  },
+  "playfield": {
+    "laneCount": 5,
+    "profile": "generic"
+  },
+  "notes": [
+    {
+      "id": "n-0001",
+      "type": "tap",
+      "timeSec": 0.0,
+      "lane": 2,
+      "sourceEventId": "ev-0001"
+    },
+    {
+      "id": "n-0002",
+      "type": "tap",
+      "timeSec": 0.5,
+      "lane": 1
+    },
+    {
+      "id": "n-0003",
+      "type": "hold",
+      "timeSec": 1.0,
+      "lane": 0,
+      "endTimeSec": 2.75,
+      "sourceEventId": "ev-0004"
+    },
+    {
+      "id": "n-0004",
+      "type": "flick",
+      "timeSec": 2.0,
+      "lane": 4,
+      "direction": "right"
+    },
+    {
+      "id": "n-0005",
+      "type": "slide",
+      "timeSec": 2.5,
+      "lane": 3,
+      "endTimeSec": 3.0,
+      "endLane": 1
+    }
+  ],
+  "extensions": {}
+}

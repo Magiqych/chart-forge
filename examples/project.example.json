@@ -1,0 +1,35 @@
+{
+  "version": "0.1.0",
+  "name": "Example Project",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "modifiedAt": "2026-01-01T00:00:00Z",
+  "audio": {
+    "path": "fixtures/example-song.wav",
+    "durationSec": 8.0
+  },
+  "analysis": {
+    "kind": "file",
+    "path": "analysis.example.json"
+  },
+  "chart": {
+    "kind": "file",
+    "path": "chart.example.json"
+  },
+  "editor": {
+    "viewportStartSec": 0.0,
+    "pixelsPerSecond": 120.0,
+    "playheadSec": 1.0,
+    "snap": { "enabled": true, "division": 4 },
+    "layers": [
+      { "id": "waveform", "visible": true },
+      { "id": "beatGrid", "visible": true },
+      { "id": "onsets", "visible": true },
+      { "id": "events", "visible": true, "options": { "minConfidence": 0.5 } },
+      { "id": "spectrogram", "visible": false },
+      { "id": "stems", "visible": false }
+    ]
+  },
+  "metadata": {
+    "note": "Illustrative document only. Analysis and chart are referenced by file here; the inline form is available for small self-contained projects."
+  }
+}

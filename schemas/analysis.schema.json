@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Magiqych/chart-forge/schemas/analysis.schema.json",
+  "title": "Chart Forge Analysis",
+  "description": "Guide information extracted from an audio source by an Analyzer. Describes what happens in the music and when. This is NOT a chart: it contains no gameplay decisions, no lanes and no notes. An Editor displays this document as a guide layer for a human author. All time values are in seconds from the start of the audio unless stated otherwise. Analyzers are expected to omit any field they cannot determine; only 'version', 'audio' and 'events' are required.",
+  "type": "object",
+  "required": ["version", "audio", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Version of the Analysis document format (semantic versioning).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "generator": {
+      "description": "Which tool produced this document, and with which settings. Provenance only; consumers must not depend on it.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "parameters": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "audio": { "$ref": "#/$defs/audioRef" },
+    "tempo": {
+      "description": "Tempo information. 'bpm' is the overall representative tempo; 'map' describes tempo over time when it is not constant.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bpm": { "type": "number", "exclusiveMinimum": 0 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "map": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["timeSec", "bpm"],
+            "additionalProperties": false,
+            "properties": {
+              "timeSec": { "$ref": "#/$defs/timeSec" },
+              "bpm": { "type": "number", "exclusiveMinimum": 0 },
+              "confidence": { "$ref": "#/$defs/confidence" }
+            }
+          }
+        }
+      }
+    },
+    "beats": {
+      "description": "Detected beat positions in ascending time order. A beat with 'isDownbeat' true starts a bar.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timeSec"],
+        "additionalProperties": false,
+        "properties": {
+          "timeSec": { "$ref": "#/$defs/timeSec" },
+          "isDownbeat": { "type": "boolean" },
+          "barIndex": { "type": "integer", "minimum": 0 },
+          "beatInBar": {
+            "description": "1-based position of this beat within its bar.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "confidence": { "$ref": "#/$defs/confidence" }
+        }
+      }
+    },
+    "stems": {
+      "description": "References to source-separated audio produced alongside this analysis. Events may point at a stem via 'source.stemId'. Audio data is never embedded here.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "kind": {
+            "description": "Open vocabulary. Consumers must tolerate unknown values.",
+            "type": "string",
+            "examples": ["vocals", "drums", "bass", "piano", "guitar", "other", "accompaniment"]
+          },
+          "path": {
+            "description": "Path to the separated audio, relative to this document.",
+            "type": "string"
+          },
+          "method": {
+            "description": "How the stem was produced, for provenance.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sections": {
+      "description": "Optional coarse structural segmentation of the track (intro, chorus, ...). Advisory only.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["startSec"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "label": { "type": "string" },
+          "startSec": { "$ref": "#/$defs/timeSec" },
+          "endSec": { "$ref": "#/$defs/timeSec" },
+          "confidence": { "$ref": "#/$defs/confidence" }
+        }
+      }
+    },
+    "events": {
+      "description": "The musical events found in the audio. This is the primary guide layer. An event is an observation about the audio; it is not a note and carries no lane or gameplay type.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/analysisEvent" }
+    },
+    "metadata": {
+      "description": "Free-form additional data. Not part of the contract.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Identifier unique within this document.",
+      "type": "string",
+      "minLength": 1
+    },
+    "timeSec": {
+      "description": "Time in seconds from the start of the audio.",
+      "type": "number",
+      "minimum": 0
+    },
+    "confidence": {
+      "description": "How much the Analyzer trusts this value, from 0 (no confidence) to 1 (certain). Absent means unknown, which is not the same as 0.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "audioRef": {
+      "description": "Identifies the audio this document describes. Audio is referenced, never embedded.",
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Path to the audio file, relative to this document unless absolute.",
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "description": "Hash of the audio file, so a consumer can detect that the audio changed.",
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 },
+        "sampleRate": { "type": "integer", "exclusiveMinimum": 0 },
+        "channels": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "analysisEvent": {
+      "type": "object",
+      "required": ["id", "type", "startSec"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": {
+          "description": "What kind of observation this is. Open vocabulary: consumers must ignore, rather than reject, unknown types. 'onset' = a sound starts; 'note' = a pitched sound with a start and usually an end; 'percussion' = an unpitched hit; 'sustain' = a held sound; 'silence' = a gap.",
+          "type": "string",
+          "examples": ["onset", "note", "percussion", "sustain", "silence"]
+        },
+        "startSec": { "$ref": "#/$defs/timeSec" },
+        "endSec": {
+          "description": "When the event stops sounding. Absent for events with no meaningful duration, or when the Analyzer could not determine an end. Must be greater than or equal to 'startSec'.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "durationSec": {
+          "description": "Convenience duration. When both 'endSec' and 'durationSec' are present they must agree; 'endSec' is authoritative.",
+          "type": "number",
+          "minimum": 0
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source": {
+          "description": "Where in the mix this event came from.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "stemId": {
+              "description": "Identifier of an entry in the top-level 'stems' array.",
+              "$ref": "#/$defs/id"
+            },
+            "instrument": {
+              "description": "Open vocabulary, e.g. 'kick', 'snare', 'hihat', 'vocal', 'synth-lead'.",
+              "type": "string"
+            }
+          }
+        },
+        "pitch": {
+          "description": "Pitch of the event, if it is pitched and the Analyzer determined it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "midi": {
+              "description": "MIDI note number; fractional values express detuning.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 127
+            },
+            "hz": { "type": "number", "exclusiveMinimum": 0 },
+            "name": {
+              "description": "Human-readable pitch name such as C#4.",
+              "type": "string"
+            }
+          }
+        },
+        "loudness": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "peakDb": { "type": "number" },
+            "rmsDb": { "type": "number" }
+          }
+        },
+        "metadata": {
+          "description": "Analyzer-specific extra data. Consumers must not depend on any particular key.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"version":"0.1.0","audio":{"path":"a.wav"},"timing":{"offsetSec":0.0},"playfield":{"laneCount":5},"notes":[{"id":"n1","type":"tap","timeSec":0.0,"lane":0},{"id":"n1","type":"tap","timeSec":1.0,"lane":1}]}

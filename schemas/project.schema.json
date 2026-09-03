@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Magiqych/chart-forge/schemas/project.schema.json",
+  "title": "Chart Forge Project",
+  "description": "One authoring project as the Editor sees it: which audio, which analysis and which chart belong together, plus the Editor's own working state. A project associates documents; it is not itself an analysis or a chart. Analysis and chart data may be referenced by file or embedded inline. Referencing is the expected default because analysis documents can be large; inline embedding exists so that a small, self-contained project can be moved as a single file.",
+  "type": "object",
+  "required": ["version", "audio"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Version of the Project document format (semantic versioning).",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "name": {
+      "description": "Human-readable name of the project.",
+      "type": "string"
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "modifiedAt": { "type": "string", "format": "date-time" },
+    "audio": {
+      "description": "The audio the project is built around. Always a reference; audio is never embedded.",
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Path to the audio file, relative to this document unless absolute.",
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "description": "Hash of the audio file, so the Editor can warn when the audio changed after analysis.",
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "analysis": {
+      "description": "The Analysis document used as the guide layer. Absent when the audio has not been analysed yet.",
+      "$ref": "#/$defs/documentRef"
+    },
+    "chart": {
+      "description": "The Chart document being authored. Absent for a project where authoring has not started.",
+      "$ref": "#/$defs/documentRef"
+    },
+    "editor": {
+      "description": "Editor working state. Purely a convenience for restoring a session: it must never affect the meaning of the analysis or the chart, and any Editor must work correctly when this is missing or contains keys it does not recognise.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "viewportStartSec": {
+          "description": "Left edge of the timeline view, in seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "pixelsPerSecond": {
+          "description": "Timeline zoom level.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "playheadSec": { "type": "number", "minimum": 0 },
+        "snap": {
+          "description": "Grid snapping used when placing notes.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "division": {
+              "description": "Beat subdivision to snap to, e.g. 4 for sixteenth notes in 4/4.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "layers": {
+          "description": "Visibility of the guide layers drawn on the timeline. Open vocabulary of layer ids such as waveform, spectrogram, beatGrid, onsets, events, stems.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "visible": { "type": "boolean", "default": true },
+              "options": { "type": "object", "additionalProperties": true }
+            }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "description": "Free-form additional data.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "documentRef": {
+      "description": "Either a reference to a document stored in a separate file, or that document embedded inline. Exactly one of the two forms.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "file" },
+            "path": {
+              "description": "Path to the document, relative to this project file unless absolute.",
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "description": "Hash of the referenced document, so the Editor can detect that it changed outside the project.",
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "data"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "inline" },
+            "data": {
+              "description": "The embedded document, which must itself satisfy the corresponding schema (analysis.schema.json or chart.schema.json). It is not re-validated here so that this schema stays independent of the other two.",
+              "type": "object"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

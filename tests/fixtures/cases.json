@@ -1,0 +1,118 @@
+{
+  "description": "Negative fixtures. Each case names the documents to validate together and the exact set of problem codes the contract test must report for them - no more and no fewer. Document paths are relative to the repository root, so a case can pair a broken fixture with a good example. See tests/README.md.",
+  "cases": [
+    {
+      "name": "malformed JSON",
+      "expect": ["json/parse-error"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-malformed.json" }
+    },
+    {
+      "name": "document does not exist",
+      "expect": ["json/missing-file"],
+      "documents": { "analysis": "tests/fixtures/invalid/deliberately-absent.json" }
+    },
+    {
+      "name": "analysis: unknown property, and required events missing",
+      "expect": ["schema/invalid"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-schema-violation.json" }
+    },
+    {
+      "name": "analysis: duplicate event id",
+      "expect": ["analysis/duplicate-event-id"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-duplicate-event-id.json" }
+    },
+    {
+      "name": "analysis: duplicate stem id",
+      "expect": ["analysis/duplicate-stem-id"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-duplicate-stem-id.json" }
+    },
+    {
+      "name": "analysis: event references an undeclared stem",
+      "expect": ["analysis/unknown-stem-ref"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-unknown-stem-ref.json" }
+    },
+    {
+      "name": "analysis: event ends before it starts",
+      "expect": ["analysis/end-before-start"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-end-before-start.json" }
+    },
+    {
+      "name": "analysis: durationSec disagrees with endSec - startSec",
+      "expect": ["analysis/duration-mismatch"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-duration-mismatch.json" }
+    },
+    {
+      "name": "analysis: beats out of order",
+      "expect": ["analysis/beats-not-ascending"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-beats-not-ascending.json" }
+    },
+    {
+      "name": "chart: lane outside the playfield",
+      "expect": ["chart/lane-out-of-range"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-lane-out-of-range.json" }
+    },
+    {
+      "name": "chart: endLane outside the playfield",
+      "expect": ["chart/end-lane-out-of-range"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-end-lane-out-of-range.json" }
+    },
+    {
+      "name": "chart: note ends before it starts",
+      "expect": ["chart/end-not-after-start"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-end-not-after-start.json" }
+    },
+    {
+      "name": "chart: hold without an end",
+      "expect": ["chart/hold-missing-end"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-hold-missing-end.json" }
+    },
+    {
+      "name": "chart: duplicate note id",
+      "expect": ["chart/duplicate-note-id"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-duplicate-note-id.json" }
+    },
+    {
+      "name": "chart: notes out of order",
+      "expect": ["chart/notes-not-ascending"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-notes-not-ascending.json" }
+    },
+    {
+      "name": "chart: bpmChanges out of order",
+      "expect": ["chart/bpm-changes-not-ascending"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-bpm-changes-not-ascending.json" }
+    },
+    {
+      "name": "cross: sourceEventId does not resolve in the paired analysis",
+      "expect": ["cross/unknown-source-event"],
+      "documents": {
+        "analysis": "examples/analysis.example.json",
+        "chart": "tests/fixtures/invalid/chart-unknown-source-event.json"
+      }
+    },
+    {
+      "name": "project: referenced document does not exist",
+      "expect": ["project/missing-reference"],
+      "documents": { "project": "tests/fixtures/invalid/project-missing-reference.json" }
+    },
+    {
+      "name": "project: document reference is neither a file nor inline",
+      "expect": ["schema/invalid"],
+      "documents": { "project": "tests/fixtures/invalid/project-ambiguous-document-ref.json" }
+    },
+    {
+      "name": "project: project and analysis point at different audio",
+      "expect": ["cross/audio-mismatch"],
+      "documents": { "project": "tests/fixtures/invalid/project-audio-mismatch.json" }
+    },
+    {
+      "name": "project: project and analysis disagree on audio duration",
+      "expect": ["cross/audio-duration-mismatch"],
+      "documents": { "project": "tests/fixtures/invalid/project-audio-duration-mismatch.json" }
+    },
+    {
+      "name": "project: project and inline analysis disagree on the audio hash",
+      "expect": ["cross/audio-sha256-mismatch"],
+      "documents": { "project": "tests/fixtures/invalid/project-audio-sha256-mismatch.json" }
+    }
+  ]
+}
