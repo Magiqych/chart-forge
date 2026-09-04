@@ -831,22 +831,33 @@ def report_coverage(covered, report):
         report.note("         - {0} ({1})".format(code, CODES[code]))
 
 
-def run_external_analysis(path, report):
-    """Validate one Analysis document that lives outside the repository.
+EXTERNAL_KINDS = {
+    "analysis": ("analysis.schema.json", check_analysis, "Analysis"),
+    "chart": ("chart.schema.json", check_chart, "Chart"),
+}
 
-    Only the Analysis contract is exercised: the schema, then the same semantic checks
-    the repository's own examples go through. No chart, no project, no fixtures, and
-    nothing in the repository is copied or modified.
+
+def run_external_document(path, report, kind):
+    """Validate one Analysis or Chart document that lives outside the repository.
+
+    Only that one contract is exercised: the schema, then the same semantic checks the
+    repository's own examples go through. No project, no cross-document checks, no
+    fixtures, and nothing in the repository is copied or modified.
+
+    A Chart written by the Editor is the case this exists for: the document lives beside
+    the audio in a working directory that is deliberately not part of this repository, so
+    there has to be a way to hold it to the contract from outside.
     """
+    schema_name, semantic_check, label = EXTERNAL_KINDS[kind]
     target = Path(path).expanduser().resolve()
     if not report.quiet:
-        print("Chart Forge Analysis validation")
+        print("Chart Forge {0} validation".format(label))
         print("repository: " + str(REPO_ROOT))
         print("document:   " + str(target))
 
     report.heading("schema")
     problems = Problems()
-    schema_path = REPO_ROOT / "schemas" / "analysis.schema.json"
+    schema_path = REPO_ROOT / "schemas" / schema_name
     schema = load_json(schema_path, problems)
     if schema is None:
         for code, message in problems.items:
@@ -876,17 +887,17 @@ def run_external_analysis(path, report):
     for code, message in schema_problems.items:
         report.fail("{0}: {1}".format(code, message))
     if not schema_problems:
-        report.ok("conforms to analysis.schema.json")
+        report.ok("conforms to {0}".format(schema_name))
 
     if schema_problems:
         report.note("skipping semantic checks: the document does not match its schema")
     else:
         semantic = Problems()
-        check_analysis(document, str(target), semantic)
+        semantic_check(document, str(target), semantic)
         for code, message in semantic.items:
             report.fail("{0}: {1}".format(code, message))
         if not semantic:
-            report.ok("satisfies every Analysis semantic check")
+            report.ok("satisfies every {0} semantic check".format(label))
 
     print()
     if report.failures:
@@ -900,9 +911,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         epilog="Two modes: with no arguments the full repository contract suite runs "
-               "(schemas, examples, negative fixtures, coverage). With --analysis, only "
-               "the given Analysis JSON is validated against schemas/analysis.schema.json "
-               "and the Analysis semantic checks.",
+               "(schemas, examples, negative fixtures, coverage). With --analysis or "
+               "--chart, only the given document is validated against its own schema in "
+               "schemas/ and that document type's semantic checks.",
     )
     parser.add_argument(
         "--repo-root", default=None, help="repository root (default: the parent of tests/)"
@@ -910,6 +921,11 @@ def main(argv=None):
     parser.add_argument(
         "--analysis", default=None, metavar="PATH",
         help="validate a single Analysis JSON document at PATH (absolute or relative) "
+             "instead of running the repository suite; exits 0 when it is valid",
+    )
+    parser.add_argument(
+        "--chart", default=None, metavar="PATH",
+        help="validate a single Chart JSON document at PATH (absolute or relative) "
              "instead of running the repository suite; exits 0 when it is valid",
     )
     parser.add_argument("--quiet", action="store_true", help="print failures only")
@@ -923,8 +939,12 @@ def main(argv=None):
 
     report = Report(quiet=args.quiet)
 
+    if args.analysis and args.chart:
+        parser.error("--analysis and --chart validate one document each; give only one")
     if args.analysis:
-        return run_external_analysis(args.analysis, report)
+        return run_external_document(args.analysis, report, "analysis")
+    if args.chart:
+        return run_external_document(args.chart, report, "chart")
 
     if not args.quiet:
         print("Chart Forge contract tests")

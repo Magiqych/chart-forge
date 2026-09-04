@@ -32,6 +32,17 @@ pub struct LoadedProject {
     pub analysis_hash_verified: bool,
     /// Canonical path of the audio the analysis refers to, when it exists on disk.
     pub audio_path: Option<String>,
+    /// Canonical path of the resolved Chart document, if the project references one that
+    /// exists. `None` for a project where authoring has not started.
+    pub chart_path: Option<String>,
+    /// The Chart document, verbatim. The frontend projects it; we do not interpret it.
+    pub chart: Option<serde_json::Value>,
+    /// Whether the project recorded a sha256 for the chart and it matched.
+    pub chart_hash_verified: bool,
+    /// Where a save would write. Derived here, never chosen by the frontend: either the
+    /// path the project already references, or a sibling of the project file for a
+    /// project that has no chart yet.
+    pub chart_target_path: String,
 }
 
 /// Errors the UI is expected to tell apart. The `kind` matches the TypeScript union in
@@ -45,16 +56,16 @@ pub struct LoadError {
 }
 
 impl LoadError {
-    fn new(kind: &str, message: impl Into<String>) -> Self {
+    pub fn new(kind: &str, message: impl Into<String>) -> Self {
         Self { kind: kind.into(), message: message.into(), detail: None }
     }
 
-    fn with_detail(kind: &str, message: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn with_detail(kind: &str, message: impl Into<String>, detail: impl Into<String>) -> Self {
         Self { kind: kind.into(), message: message.into(), detail: Some(detail.into()) }
     }
 }
 
-type LoadResult<T> = Result<T, LoadError>;
+pub type LoadResult<T> = Result<T, LoadError>;
 
 fn canonical(path: &Path) -> Option<String> {
     fs::canonicalize(path)
@@ -85,7 +96,7 @@ fn read_json(path: &Path, unreadable: &str, malformed: &str) -> LoadResult<serde
         .map_err(|e| LoadError::with_detail(malformed, format!("{} is not valid JSON", path.display()), e.to_string()))
 }
 
-fn sha256_file(path: &Path) -> std::io::Result<String> {
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     let bytes = fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
@@ -94,6 +105,111 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
 
 fn version_of(document: &serde_json::Value) -> &str {
     document.get("version").and_then(|v| v.as_str()).unwrap_or("")
+}
+
+/// Where a Chart for this project lives, or would live.
+///
+/// A project without a `chart` reference is explicitly allowed by the contract
+/// ("Absent for a project where authoring has not started"), so the Editor has to be
+/// able to name a file before one exists. The name is derived from the project's own,
+/// which keeps the choice here rather than in the frontend: no code path lets the
+/// webview nominate a path to write to.
+pub fn chart_target(project_path: &Path, project: &serde_json::Value) -> LoadResult<PathBuf> {
+    match project.get("chart") {
+        None | Some(serde_json::Value::Null) => Ok(derived_chart_path(project_path)),
+        Some(reference) => match reference.get("kind").and_then(|v| v.as_str()).unwrap_or("") {
+            "file" => reference
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|r| resolve_ref(project_path, r))
+                .ok_or_else(|| LoadError::new("chartUnreadable", "chart reference has no path")),
+            "inline" => Err(LoadError::new(
+                "chartInlineUnsupported",
+                "this Editor writes charts to a file; the project embeds its chart inline",
+            )),
+            other => Err(LoadError::new(
+                "chartUnreadable",
+                format!("unsupported chart reference kind {other:?}"),
+            )),
+        },
+    }
+}
+
+/// `<name>.project.json` becomes `<name>.chart.json`, beside the project file.
+fn derived_chart_path(project_path: &Path) -> PathBuf {
+    let stem = project_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "chart".to_string());
+    let stem = stem.strip_suffix(".project").unwrap_or(&stem).to_string();
+    project_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("{stem}.chart.json"))
+}
+
+/// Read the Chart a project references, if it has one that exists on disk.
+fn load_chart(
+    project_path: &Path,
+    project: &serde_json::Value,
+) -> LoadResult<(Option<String>, Option<serde_json::Value>, bool)> {
+    let Some(reference) = project.get("chart") else { return Ok((None, None, false)) };
+    if reference.is_null() {
+        return Ok((None, None, false));
+    }
+
+    match reference.get("kind").and_then(|v| v.as_str()).unwrap_or("") {
+        "inline" => {
+            let data = reference
+                .get("data")
+                .cloned()
+                .ok_or_else(|| LoadError::new("chartMalformed", "inline chart has no data"))?;
+            Ok((None, Some(data), false))
+        }
+        "file" => {
+            let path = reference
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| LoadError::new("chartUnreadable", "chart reference has no path"))?;
+            let resolved = resolve_ref(project_path, path);
+            if !resolved.is_file() {
+                // A project may name a chart that has not been written yet. That is a
+                // project waiting for its first save, not a broken project.
+                return Ok((None, None, false));
+            }
+            let document = read_json(&resolved, "chartUnreadable", "chartMalformed")?;
+
+            let mut verified = false;
+            if let Some(expected) = reference.get("sha256").and_then(|v| v.as_str()) {
+                let actual = sha256_file(&resolved).map_err(|e| {
+                    LoadError::with_detail("chartUnreadable", "cannot hash chart", e.to_string())
+                })?;
+                if actual != expected {
+                    return Err(LoadError::with_detail(
+                        "chartHashMismatch",
+                        "the chart has changed since the project recorded its hash",
+                        format!("expected {expected}, found {actual}"),
+                    ));
+                }
+                verified = true;
+            }
+
+            let chart_version = version_of(&document);
+            if !chart_version.starts_with("0.1.") {
+                return Err(LoadError::new(
+                    "chartUnsupportedVersion",
+                    format!("this Editor reads Chart 0.1.x, found {chart_version:?}"),
+                ));
+            }
+
+            let canonical_path = canonical(&resolved).unwrap_or_else(|| resolved.display().to_string());
+            Ok((Some(canonical_path), Some(document), verified))
+        }
+        other => Err(LoadError::new(
+            "chartUnreadable",
+            format!("unsupported chart reference kind {other:?}"),
+        )),
+    }
 }
 
 /// Load a Project and the Analysis it references.
@@ -121,6 +237,11 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
 
     let canonical_project = canonical(project_path).unwrap_or_else(|| project_path.display().to_string());
 
+    // The chart is resolved before the analysis, because a project with neither still
+    // needs to know where its chart would be written.
+    let (chart_path, chart, chart_hash_verified) = load_chart(project_path, &project)?;
+    let chart_target_path = chart_target(project_path, &project)?.display().to_string();
+
     // The analysis reference is optional: a project may exist before anything is analysed.
     let analysis_ref = project.get("analysis");
     let Some(analysis_ref) = analysis_ref else {
@@ -131,6 +252,10 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
             analysis: None,
             analysis_hash_verified: false,
             audio_path: None,
+            chart_path,
+            chart,
+            chart_hash_verified,
+            chart_target_path,
         });
     };
 
@@ -210,6 +335,10 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
         analysis: Some(analysis),
         analysis_hash_verified: hash_verified,
         audio_path,
+        chart_path,
+        chart,
+        chart_hash_verified,
+        chart_target_path,
     })
 }
 
@@ -377,6 +506,70 @@ mod tests {
         write(&root.join("p.json"), r#"{"version":"0.1.0","audio":{"path":"x.wav"}}"#);
         let loaded = load_project(root.join("p.json").to_str().unwrap()).unwrap();
         assert!(loaded.analysis.is_none());
+    }
+
+    const CHART: &str = r#"{"version":"0.1.0","audio":{"path":"song.wav"},
+        "timing":{"offsetSec":0},"playfield":{"laneCount":5},
+        "notes":[{"id":"n-0001","type":"tap","timeSec":1.0,"lane":2}]}"#;
+
+    #[test]
+    fn loads_the_chart_a_project_references() {
+        let root = temp_dir("chart-load");
+        write(&root.join("song.chart.json"), CHART);
+        write(
+            &root.join("song.project.json"),
+            r#"{"version":"0.1.0","audio":{"path":"x.wav"},
+                "chart":{"kind":"file","path":"song.chart.json"}}"#,
+        );
+
+        let loaded = load_project(root.join("song.project.json").to_str().unwrap()).unwrap();
+        let chart = loaded.chart.expect("the referenced chart should load");
+        assert_eq!(chart["notes"][0]["id"], "n-0001");
+        assert!(!loaded.chart_hash_verified, "no hash was recorded");
+        assert!(loaded.chart_target_path.replace('\\', "/").ends_with("song.chart.json"));
+    }
+
+    #[test]
+    fn derives_a_chart_target_for_a_project_that_has_none() {
+        let root = temp_dir("chart-target");
+        write(&root.join("u149.project.json"), r#"{"version":"0.1.0","audio":{"path":"x.wav"}}"#);
+
+        let loaded = load_project(root.join("u149.project.json").to_str().unwrap()).unwrap();
+        assert!(loaded.chart.is_none(), "authoring has not started");
+        assert!(
+            loaded.chart_target_path.replace('\\', "/").ends_with("u149.chart.json"),
+            "got {}",
+            loaded.chart_target_path
+        );
+    }
+
+    #[test]
+    fn a_referenced_chart_that_does_not_exist_yet_is_not_an_error() {
+        let root = temp_dir("chart-pending");
+        write(
+            &root.join("p.json"),
+            r#"{"version":"0.1.0","audio":{"path":"x.wav"},
+                "chart":{"kind":"file","path":"not-written-yet.json"}}"#,
+        );
+        let loaded = load_project(root.join("p.json").to_str().unwrap()).unwrap();
+        assert!(loaded.chart.is_none());
+        assert!(loaded.chart_target_path.replace('\\', "/").ends_with("not-written-yet.json"));
+    }
+
+    #[test]
+    fn rejects_a_chart_whose_recorded_hash_does_not_match() {
+        let root = temp_dir("chart-hash-bad");
+        write(&root.join("c.json"), CHART);
+        write(
+            &root.join("p.json"),
+            &format!(
+                r#"{{"version":"0.1.0","audio":{{"path":"x.wav"}},
+                    "chart":{{"kind":"file","path":"c.json","sha256":"{}"}}}}"#,
+                "0".repeat(64)
+            ),
+        );
+        let error = load_project(root.join("p.json").to_str().unwrap()).unwrap_err();
+        assert_eq!(error.kind, "chartHashMismatch");
     }
 
     #[test]

@@ -98,13 +98,20 @@ They are never React elements.
 
 ```text
 src/
-  core/       pure logic - projection, viewport maths, lane layout   (unit tested)
-  render/     Canvas 2D renderer and theme
+  core/       pure logic - projection, chart model, snapping, session,
+              viewport maths, lane layout                            (unit tested)
+  render/     Canvas 2D renderers (analysis overlay, chart notes) and theme
   audio/      playback element + display envelope
-  io/         the one route to documents, via the Rust loader
-  ui/         React components: Toolbar, LayerPanel, Timeline host
-src-tauri/    Rust: OS dialog, document loader, narrow asset scope
+  io/         the one route to documents, via the Rust loader and saver
+  ui/         React components: Toolbar, ChartBar, LayerPanel, Timeline host
+src-tauri/    Rust: OS dialog, document loader, chart saver, narrow asset scope
 ```
+
+The timeline is **two stacked canvases**. The back one draws the analysis overlay; the
+front one draws the chart notes, the placement preview and the playhead. They repaint
+independently, so moving the pointer across a lane does not redraw 2258 events, and the
+stacking fixes the order the Editor needs: beat grid, then analysis overlay, then chart
+notes, then the playhead and live interaction.
 
 ### The filesystem boundary
 
@@ -134,15 +141,72 @@ mistaken for a measured end.
 There is **no confidence control**, not even a disabled one: Analysis 0.2 emits no
 `confidence`, and offering the affordance would promise what the data cannot deliver.
 
+### Authoring a chart
+
+Placing a note is a click in a lane band of the notes row. The lane is whichever band was
+clicked - **nothing derives a lane from a stem or from an analysis event**, and no such
+mapping exists anywhere in the code or in the contract. Clicking an existing note selects
+it instead of stacking another on top; Delete removes the selected one.
+
+Snapping subdivides the **detected** `beats[]` by the chosen division, interpolating
+inside each real interval. It never generates a grid from `tempo.bpm`: the Analyzer emits
+no tempo map, a performance drifts, and an averaged grid would agree with the audio at
+the start of a song and be wrong by the end. Analysis events are **not** snap targets -
+snapping a note to an onset would quietly make the Analyzer the author.
+
+Everything that changes the chart goes through `core/editorSession.ts`: `place`, `remove`,
+`select` and `setSnap` are pure and return a new session, so an undo stack is a later
+addition rather than a rewrite. Selection and the placement preview never reach either
+document.
+
+A session can have **two** things unsaved, and they are tracked apart. Placing or deleting
+a note changes the Chart; changing the snap setting or division changes the Project's
+`editor` section, which the contract keeps so a session can be restored. They are saved
+together but can fail apart, so one flag could not describe the outcome honestly. The
+toolbar still shows a single indicator.
+
+Saving is explicit; there is no autosave. The Rust command takes the **project** path, not
+a chart path, and derives the destination itself, so the frontend cannot nominate a file
+to overwrite. The editor settings it accepts are a typed struct of exactly the two snap
+fields, so the only part of a project document the frontend can write is the part the
+contract defines for it; every other key under `editor`, known or not, is left as found.
+
+**Order is chart first, then project**, because the project holds the reference to the
+chart: nothing should point at a file that does not exist yet. Each file is written to a
+temporary file in its own directory, flushed, synced and renamed over the target in one
+step, so a half-written document never exists. If the project write fails afterwards, the
+chart on disk is complete and valid - merely not yet referenced, or referenced with a
+stale hash - so the Editor reports the chart as saved, keeps the project side dirty, and
+the next save finishes the job. That is why there is no rollback machinery here: no
+reachable intermediate state is corrupt.
+
+The project file is rewritten only when it must be: to record a chart reference it did not
+have, to refresh a `sha256` this write invalidated, or to store snap settings that
+changed. When none of those apply the whole save is a single atomic file write.
+
+A chart the Editor creates is referenced by name and **without** a `sha256`, because the
+Editor rewrites that file on every save and a recorded hash would go stale immediately
+unless the project were rewritten every time too. A project whose chart reference is
+`kind: "inline"` is refused with an explicit message rather than written to a file.
+
 ## Implementation status
 
-Foundation and Analysis visualisation MVP: project loading, the read-only projection, the
+Foundation and Analysis visualisation: project loading, the read-only projection, the
 timeline with beat grid and four event lanes, per-layer visibility, zoom/pan, and audio
 playback with a synchronised playhead.
 
-Not implemented, and deliberately so: note authoring, event snapping, automatic
-event-to-note conversion, spectrogram, pitch contours, stem soloing, density
-aggregation, undo/redo, and Player integration.
+Note placement MVP: chart loading and creation, click to place, select, delete,
+beat-grid snapping, an explicit atomic save, and a visible clean/modified state that
+guards against opening another project over unsaved work.
+
+Not implemented, and deliberately so: event snapping, automatic event-to-note
+conversion, dragging a note to move it, multi-select, undo/redo, long-note and slide
+authoring, a keyboard shortcut system, autosave, spectrogram, pitch contours, stem
+soloing, density aggregation, and Player integration.
+
+`hold`, `slide` and any other type in the contract's open vocabulary are **read and
+written back untouched**, but cannot be placed here: they need an end time or an end
+lane, which needs a drag. `tap` and `flick` are what a single click can fully describe.
 
 **No automatic conversion of Analysis events into Chart notes exists or is planned as a
 shortcut.** The overlay is guidance; the author decides. That is the project's thesis,

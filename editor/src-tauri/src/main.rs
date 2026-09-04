@@ -1,11 +1,17 @@
 // Chart Forge Editor - Tauri shell.
 //
-// The Rust side is deliberately tiny: an OS file dialog, one document loader command,
-// and the asset scope needed to play the one audio file a Project points at. Everything
-// else - projection, layout, rendering, interaction - lives in TypeScript.
+// The Rust side is deliberately tiny: an OS file dialog, one command to load the
+// documents a Project references, one to write the Chart back, and the asset scope
+// needed to play the one audio file that Project points at. Everything else -
+// projection, layout, rendering, interaction - lives in TypeScript.
+//
+// Neither filesystem command takes a path the frontend chose. Loading takes a project
+// path the user picked from the OS dialog; saving takes that same project path and
+// derives the destination itself.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod loader;
+mod saver;
 
 use tauri::Manager;
 
@@ -17,6 +23,26 @@ use tauri::Manager;
 #[tauri::command]
 fn load_project(path: String) -> Result<loader::LoadedProject, loader::LoadError> {
     loader::load_project(&path)
+}
+
+/// Save the Chart of an already-opened project, and the editor settings that belong
+/// with it.
+///
+/// Takes the project path, not a chart path: the destination is derived in Rust from
+/// what the project says, so the frontend cannot nominate a file to overwrite. Replacing
+/// the project's own chart is a legitimate Editor action - that is what an editor is for
+/// - but it happens through a temporary file and an atomic rename, so an interrupted
+/// save can never leave a truncated chart behind.
+///
+/// `editor` is a typed struct, not free-form JSON, so the only part of the project
+/// document the frontend can write back is the snap settings the contract defines.
+#[tauri::command]
+fn save_chart(
+    project_path: String,
+    chart: serde_json::Value,
+    editor: saver::EditorState,
+) -> Result<saver::SavedChart, loader::LoadError> {
+    saver::save_chart(&project_path, chart, editor)
 }
 
 /// Grant the webview permission to stream one specific audio file.
@@ -45,7 +71,7 @@ fn allow_audio(app: tauri::AppHandle, path: String) -> Result<String, String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![load_project, allow_audio])
+        .invoke_handler(tauri::generate_handler![load_project, save_chart, allow_audio])
         .run(tauri::generate_context!())
         .expect("error while running the Chart Forge Editor");
 }

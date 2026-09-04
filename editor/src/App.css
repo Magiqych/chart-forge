@@ -125,7 +125,11 @@ body {
 .stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 .timeline-host { flex: 1; min-height: 0; overflow: hidden; }
-.timeline-canvas { display: block; cursor: crosshair; touch-action: none; }
+
+/* The two canvases are stacked, so the chart layer repaints without the overlay. */
+.timeline-stack { position: relative; }
+.timeline-canvas, .notes-canvas { position: absolute; inset: 0; display: block; }
+.notes-canvas { cursor: crosshair; touch-action: none; }
 
 .stats {
   flex: 0 0 auto;
@@ -135,4 +139,93 @@ body {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
+}
+
+/* The chart bar. Louder than the analysis controls on purpose: this is where the
+   author writes the chart, and the overlay beside it is only guide material. */
+.chartbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: #1b2432;
+  border-bottom: 1px solid #2e3b4d;
+  flex: 0 0 auto;
+}
+
+.chartbar-title {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: #7fa6e0;
+  font-weight: 600;
+}
+
+.chartbar button {
+  background: #232c38;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.chartbar button:hover:not(:disabled) { background: #2c3745; }
+.chartbar button:disabled { opacity: 0.4; cursor: default; }
+
+.chartbar button.primary {
+  background: #2f6fd0;
+  border-color: #4d8ff0;
+  font-weight: 600;
+}
+.chartbar button.primary:hover:not(:disabled) { background: #3b7ee0; }
+
+/* Clean and modified are different words as well as different colours. */
+.chartbar .dirty {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 9ch;
+}
+.chartbar .dirty-on { color: #f0b354; }
+
+.chartbar .field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chartbar .field.checkbox { gap: 5px; }
+.chartbar select {
+  background: #232c38;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+}
+.chartbar select:disabled { opacity: 0.4; }
+
+.chartbar-sep {
+  width: 1px;
+  height: 20px;
+  background: #2e3b4d;
+}
+
+.chartbar-count {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chartbar .spacer { flex: 1; }
+
+.chartbar-message {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 52ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

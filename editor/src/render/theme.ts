@@ -44,6 +44,38 @@ export const theme = {
     minSpanWidthPx: 2,
   },
 
+  /**
+   * Authored objects: in front of the observations, in the notes row.
+   *
+   * A Chart Note must never be mistaken for an Analysis Event, so it is a different
+   * shape and a different size before it is a different colour: a solid rounded block
+   * with a border, sitting in a lane band, against the events' hairline ticks and thin
+   * spans. The blue is a hue no stem lane uses, which reinforces the distinction rather
+   * than carrying it.
+   */
+  note: {
+    fill: "#4d8ff0",
+    border: "#a9c9fb",
+    selectedFill: "#f2f6ff",
+    selectedBorder: "#ffffff",
+    heightPx: 14,
+    widthPx: 20,
+    radiusPx: 3,
+    borderWidth: 1.5,
+    flickMarker: "#12161c",
+  },
+
+  /** Transient interaction feedback. Never part of the document. */
+  preview: {
+    fill: "rgba(77, 143, 240, 0.28)",
+    border: "rgba(169, 201, 251, 0.75)",
+    guide: "rgba(169, 201, 251, 0.45)",
+    laneHighlight: "rgba(77, 143, 240, 0.10)",
+  },
+
+  noteLaneBorder: "#202834",
+  noteLaneLabel: "#7f8c9e",
+
   playhead: "#f05b5b",
   playheadWidth: 1.5,
 

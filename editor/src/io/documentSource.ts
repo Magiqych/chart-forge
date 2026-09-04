@@ -7,10 +7,17 @@
  */
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 
 import { projectAnalysis, type AnalysisProjection } from "../core/analysis";
-import { ProjectLoadError, type LoadFailureKind, type ProjectSummary } from "../core/project";
+import {
+  emptyChart, projectChart, serializeChart, ChartError, type ChartState,
+} from "../core/chart";
+import { readSnapSettings, type SnapSettings } from "../core/snap";
+import {
+  directoryOf, relativePath,
+  ProjectLoadError, type LoadFailureKind, type ProjectSummary,
+} from "../core/project";
 
 /** Shape returned by the Rust loader. Mirrors loader::LoadedProject. */
 interface RawLoadedProject {
@@ -20,6 +27,10 @@ interface RawLoadedProject {
   analysis: unknown;
   analysisHashVerified: boolean;
   audioPath: string | null;
+  chartPath: string | null;
+  chart: unknown;
+  chartHashVerified: boolean;
+  chartTargetPath: string;
 }
 
 interface RawLoadError {
@@ -39,6 +50,13 @@ const KIND_MAP: Readonly<Record<string, LoadFailureKind>> = {
   analysisUnsupportedVersion: "analysis-unsupported-version",
   analysisHashMismatch: "analysis-hash-mismatch",
   audioUnreadable: "audio-unreadable",
+  chartUnreadable: "chart-unreadable",
+  chartMalformed: "chart-malformed",
+  chartUnsupportedVersion: "chart-unsupported-version",
+  chartHashMismatch: "chart-hash-mismatch",
+  chartInlineUnsupported: "chart-inline-unsupported",
+  chartWriteFailed: "chart-write-failed",
+  projectUpdateFailed: "project-update-failed",
 };
 
 export function toLoadError(raw: unknown): ProjectLoadError {
@@ -55,6 +73,29 @@ export interface OpenedProject {
   readonly projection: AnalysisProjection;
   /** Playable URL for the source audio, when the loader could resolve one. */
   readonly audioUrl: string | null;
+  /**
+   * The Chart being authored.
+   *
+   * A project may legitimately have no chart yet - the contract says the reference is
+   * "Absent for a project where authoring has not started" - so one is created in
+   * memory here. Nothing is written to disk until the author asks to save.
+   */
+  readonly chart: ChartState;
+  /** True when the chart came off disk rather than being created empty just now. */
+  readonly chartExisted: boolean;
+  /** Snap settings restored from `project.editor.snap`, or the defaults. */
+  readonly snap: SnapSettings;
+}
+
+/**
+ * Ask the user to confirm something destructive.
+ *
+ * The webview's own `window.confirm` is not usable here - it returns without ever
+ * showing anything, so a guard built on it silently agrees to whatever it was guarding
+ * against. This goes through the OS dialog the shell already has permission for.
+ */
+export async function confirmDiscard(message: string): Promise<boolean> {
+  return ask(message, { title: "Chart Forge Editor", kind: "warning" });
 }
 
 /** Show the OS dialog. Returns null when the user cancels. */
@@ -105,6 +146,30 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
     }
   }
 
+  // A project without a chart is a project where authoring has not started, so the
+  // Editor starts one in memory. It reaches the disk only when the author saves.
+  let chart: ChartState;
+  const chartExisted = loaded.chart !== null && loaded.chart !== undefined;
+  try {
+    chart = chartExisted
+      ? projectChart(loaded.chart)
+      : emptyChart({
+          // Relative to where the chart will live, not the Analyzer's absolute path: a
+          // chart that records an absolute C: path stops working the moment the project
+          // and its chart are moved anywhere else.
+          audioPath: audioReferenceFor(loaded),
+          audioDurationSec: projection.audio.durationSec,
+          ...(typeof loaded.project["name"] === "string"
+            ? { title: loaded.project["name"] }
+            : {}),
+        });
+  } catch (error) {
+    throw new ProjectLoadError(
+      error instanceof ChartError ? "chart-unsupported-version" : "chart-malformed",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   const summary: ProjectSummary = {
     ...(typeof loaded.project["name"] === "string" ? { name: loaded.project["name"] } : {}),
     version: String(loaded.project["version"] ?? ""),
@@ -112,7 +177,70 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
     ...(loaded.analysisPath ? { analysisPath: loaded.analysisPath } : {}),
     ...(loaded.audioPath ? { audioPath: loaded.audioPath } : {}),
     analysisHashVerified: loaded.analysisHashVerified,
+    ...(loaded.chartPath ? { chartPath: loaded.chartPath } : {}),
+    chartHashVerified: loaded.chartHashVerified,
+    chartTargetPath: loaded.chartTargetPath,
+    ...(loaded.project["editor"] !== undefined ? { editor: loaded.project["editor"] } : {}),
   };
 
-  return { summary, projection, audioUrl };
+  return {
+    summary,
+    projection,
+    audioUrl,
+    chart,
+    chartExisted,
+    snap: readSnapSettings(loaded.project["editor"]),
+  };
+}
+
+/**
+ * How a newly created Chart should refer to its audio.
+ *
+ * The loader resolved an absolute path; the chart wants that expressed relative to the
+ * file it is about to be written to. When the audio could not be resolved at all, the
+ * Analysis's own reference is carried over unchanged rather than invented.
+ */
+function audioReferenceFor(loaded: RawLoadedProject): string {
+  const analysisPath = (loaded.analysis as { audio?: { path?: unknown } } | null)?.audio?.path;
+  const fallback = typeof analysisPath === "string" ? analysisPath : "";
+  if (!loaded.audioPath) return fallback;
+  return relativePath(directoryOf(loaded.chartTargetPath), loaded.audioPath);
+}
+
+export interface SaveOutcome {
+  readonly chartPath: string;
+  /** True when the project file was rewritten to record or re-hash the reference. */
+  readonly projectUpdated: boolean;
+  readonly sha256: string;
+}
+
+/**
+ * Write the chart for an opened project, and the snap settings that go with it.
+ *
+ * Only the project path crosses the boundary. The destination is derived in Rust from
+ * the project on disk, so nothing in the frontend can point a write at a file of its
+ * choosing, and the Analysis is not part of what gets sent.
+ *
+ * The chart is written first and the project only afterwards, because the project holds
+ * the reference to the chart: pointing at a file before it exists would be the one
+ * ordering that can leave a project referencing nothing.
+ */
+export async function saveChart(
+  projectPath: string,
+  chart: ChartState,
+  snap: SnapSettings,
+): Promise<SaveOutcome> {
+  const document = serializeChart(chart);
+  try {
+    return await invoke<SaveOutcome>("save_chart", {
+      projectPath,
+      chart: document,
+      // Only the two fields the Project contract defines for snapping. The command
+      // takes a typed struct, so this is the whole of the project document the
+      // frontend is able to write.
+      editor: { snap: { enabled: snap.enabled, division: snap.division } },
+    });
+  } catch (raw) {
+    throw toLoadError(raw);
+  }
 }

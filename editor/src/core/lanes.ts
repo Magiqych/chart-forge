@@ -109,3 +109,50 @@ export function pitchRange(
   }
   return { minMidi: min - paddingSemitones, maxMidi: max + paddingSemitones };
 }
+
+/**
+ * Height of one chart lane inside the notes row.
+ *
+ * Big enough to aim at: the author picks the lane by clicking in it, and a lane that is
+ * hard to hit would push people towards wanting an automatic lane choice, which is
+ * exactly what a chart editor must not do.
+ */
+export const NOTE_LANE_HEIGHT_PX = 24;
+export const NOTE_ROW_PADDING_PX = 4;
+
+/** The timeline rows for a chart with this many lanes. */
+export function rowsForChart(laneCount: number): readonly Row[] {
+  const height = Math.max(1, laneCount) * NOTE_LANE_HEIGHT_PX + NOTE_ROW_PADDING_PX * 2;
+  return DEFAULT_ROWS.map((row) => (row.id === "notes" ? { ...row, heightPx: height } : row));
+}
+
+export interface LaneBand {
+  readonly topPx: number;
+  readonly heightPx: number;
+  readonly centreYPx: number;
+}
+
+/** Where one chart lane sits inside the notes row. Lane 0 is the topmost. */
+export function laneBand(
+  row: { readonly topPx: number; readonly heightPx: number },
+  laneCount: number,
+  lane: number,
+): LaneBand {
+  const usable = Math.max(1, row.heightPx - NOTE_ROW_PADDING_PX * 2);
+  const height = usable / Math.max(1, laneCount);
+  const topPx = row.topPx + NOTE_ROW_PADDING_PX + lane * height;
+  return { topPx, heightPx: height, centreYPx: topPx + height / 2 };
+}
+
+/** Which chart lane a y coordinate falls in, or null when it is outside the row. */
+export function laneAtY(
+  row: { readonly topPx: number; readonly heightPx: number },
+  laneCount: number,
+  y: number,
+): number | null {
+  const usable = Math.max(1, row.heightPx - NOTE_ROW_PADDING_PX * 2);
+  const offset = y - (row.topPx + NOTE_ROW_PADDING_PX);
+  if (offset < 0 || offset >= usable) return null;
+  const lane = Math.floor((offset / usable) * Math.max(1, laneCount));
+  return Math.min(Math.max(0, lane), Math.max(0, laneCount - 1));
+}

@@ -7,6 +7,11 @@ import {
   PITCH_LANE_PADDING_PX,
   pitchRange,
   pitchToY,
+  laneAtY,
+  laneBand,
+  rowsForChart,
+  NOTE_LANE_HEIGHT_PX,
+  NOTE_ROW_PADDING_PX,
   type RowId,
 } from "./lanes";
 
@@ -132,5 +137,53 @@ describe("pitch range", () => {
     const vocals = pitchRange([{ pitch: { midi: 55 } }, { pitch: { midi: 84 } }]);
     expect(bass.minMidi).toBeLessThan(vocals.minMidi);
     expect(bass.maxMidi).toBeLessThan(vocals.maxMidi);
+  });
+});
+
+describe("chart lane geometry", () => {
+  const row = { topPx: 100, heightPx: 5 * NOTE_LANE_HEIGHT_PX + NOTE_ROW_PADDING_PX * 2 };
+
+  it("sizes the notes row to hold every lane", () => {
+    const rows = rowsForChart(5);
+    const notes = rows.find((r) => r.id === "notes");
+    expect(notes?.heightPx).toBe(5 * NOTE_LANE_HEIGHT_PX + NOTE_ROW_PADDING_PX * 2);
+    // Every other row is untouched.
+    expect(rows.filter((r) => r.id !== "notes")).toEqual(
+      DEFAULT_ROWS.filter((r) => r.id !== "notes"),
+    );
+  });
+
+  it("stacks the lanes top to bottom with lane 0 first", () => {
+    const first = laneBand(row, 5, 0);
+    const last = laneBand(row, 5, 4);
+    expect(first.topPx).toBeLessThan(last.topPx);
+    expect(first.heightPx).toBeCloseTo(last.heightPx, 10);
+  });
+
+  it("bands tile the row without gaps or overlap", () => {
+    for (let lane = 0; lane < 4; lane += 1) {
+      const here = laneBand(row, 5, lane);
+      const next = laneBand(row, 5, lane + 1);
+      expect(here.topPx + here.heightPx).toBeCloseTo(next.topPx, 10);
+    }
+  });
+
+  it("maps a y coordinate back to the lane that contains it", () => {
+    // This is how the author chooses a lane: by clicking in it. There is no other
+    // route - nothing derives a lane from a stem or from an analysis event.
+    for (let lane = 0; lane < 5; lane += 1) {
+      expect(laneAtY(row, 5, laneBand(row, 5, lane).centreYPx)).toBe(lane);
+    }
+  });
+
+  it("returns null outside the row, including in its padding", () => {
+    expect(laneAtY(row, 5, row.topPx - 1)).toBeNull();
+    expect(laneAtY(row, 5, row.topPx + 1)).toBeNull();
+    expect(laneAtY(row, 5, row.topPx + row.heightPx + 1)).toBeNull();
+  });
+
+  it("stays inside the playfield at the very bottom edge", () => {
+    const bottom = row.topPx + row.heightPx - NOTE_ROW_PADDING_PX - 0.001;
+    expect(laneAtY(row, 5, bottom)).toBe(4);
   });
 });

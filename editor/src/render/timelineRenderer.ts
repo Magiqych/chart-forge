@@ -19,7 +19,6 @@ export interface Scene {
   readonly view: Viewport;
   readonly layout: Layout;
   readonly projection: AnalysisProjection | null;
-  readonly playheadSec: number;
   readonly showGrid: boolean;
   readonly visibleLanes: ReadonlySet<LaneId>;
   /** Display envelope, not playback data: min/max pairs per pixel column. */
@@ -74,7 +73,8 @@ export class TimelineRenderer {
     this.drawWaveform(scene);
     const drawnEvents = this.drawEvents(scene);
     this.drawRuler(scene);
-    this.drawPlayhead(scene);
+    // The playhead is drawn by the foreground NotesRenderer, so that it stays above the
+    // chart notes: beat grid -> analysis overlay -> chart notes -> playhead.
 
     return { drawnEvents, drawnBeats, millis: performance.now() - started };
   }
@@ -303,17 +303,6 @@ export class TimelineRenderer {
     }
   }
 
-  private drawPlayhead(scene: Scene): void {
-    const x = timeToX(scene.playheadSec, scene.view);
-    if (x < 0 || x > scene.view.widthPx) return;
-    const { ctx } = this;
-    ctx.strokeStyle = theme.playhead;
-    ctx.lineWidth = theme.playheadWidth;
-    ctx.beginPath();
-    ctx.moveTo(Math.round(x) + 0.5, 0);
-    ctx.lineTo(Math.round(x) + 0.5, scene.layout.totalHeightPx);
-    ctx.stroke();
-  }
 }
 
 /** Ruler step in seconds, chosen so labels never collide. */

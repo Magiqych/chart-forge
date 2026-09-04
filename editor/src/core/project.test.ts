@@ -7,6 +7,8 @@ import {
   isSupportedProjectVersion,
   normalizePath,
   ProjectLoadError,
+  relativePath,
+  directoryOf,
   resolveRelativeRef,
 } from "./project";
 
@@ -150,5 +152,58 @@ describe("load failures are distinguishable", () => {
     expect(describeFailure(new ProjectLoadError("analysis-missing-reference", ""))).not.toBe(
       describeFailure(new ProjectLoadError("analysis-unreadable", "")),
     );
+  });
+});
+
+describe("directoryOf", () => {
+  it("drops the file name", () => {
+    expect(directoryOf("D:/work/projects/song.project.json")).toBe("D:/work/projects");
+    expect(directoryOf(String.raw`D:\work\projects\song.project.json`)).toBe("D:/work/projects");
+  });
+});
+
+describe("relativePath", () => {
+  // This is how a newly written Chart records its audio: relative to the chart file, so
+  // that moving the project directory does not break the reference.
+  it("descends into a subdirectory", () => {
+    expect(relativePath("D:/work/projects", "D:/work/projects/audio/song.flac")).toBe(
+      "audio/song.flac",
+    );
+  });
+
+  it("climbs out and back down", () => {
+    expect(relativePath("D:/work/projects", "D:/work/runs/pinned-A/analysis.json")).toBe(
+      "../runs/pinned-A/analysis.json",
+    );
+  });
+
+  it("climbs several levels", () => {
+    expect(relativePath("D:/a/b/c/d", "D:/a/song.flac")).toBe("../../../song.flac");
+  });
+
+  it("names a sibling without a leading ./", () => {
+    expect(relativePath("D:/work", "D:/work/song.chart.json")).toBe("song.chart.json");
+  });
+
+  it("treats Windows drive letters case-insensitively", () => {
+    expect(relativePath("d:/work/projects", "D:/work/song.flac")).toBe("../song.flac");
+  });
+
+  it("falls back to the absolute path across drives", () => {
+    // A wrong relative path would silently point at nothing; an absolute one at least
+    // says where the file really is.
+    expect(relativePath("D:/work/projects", "C:/Users/someone/Music/song.flac")).toBe(
+      "C:/Users/someone/Music/song.flac",
+    );
+  });
+
+  it("accepts backslashes on either side", () => {
+    expect(relativePath(String.raw`D:\work\projects`, String.raw`D:\work\song.flac`)).toBe(
+      "../song.flac",
+    );
+  });
+
+  it("returns . when the target is the directory itself", () => {
+    expect(relativePath("D:/work", "D:/work")).toBe(".");
   });
 });
