@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSnapGrid, readSnapSettings, snapTime, DEFAULT_SNAP } from "./snap";
+import {
+  buildSnapGrid, readSnapSettings, snapTime, snapToNearestEventStart, DEFAULT_SNAP,
+} from "./snap";
 
 const beat = (timeSec: number) => ({ timeSec });
 
@@ -123,5 +125,59 @@ describe("readSnapSettings", () => {
     expect(readSnapSettings({ snap: { division: 0 } }).division).toBe(DEFAULT_SNAP.division);
     expect(readSnapSettings({ snap: { division: 2.5 } }).division).toBe(DEFAULT_SNAP.division);
     expect(readSnapSettings({ snap: { division: "4" } }).division).toBe(DEFAULT_SNAP.division);
+  });
+});
+
+describe("snapToNearestEventStart", () => {
+  const events = [{ startSec: 10.0 }, { startSec: 10.37 }, { startSec: 11.2 }];
+
+  it("takes the nearest event start within the threshold", () => {
+    // At 100 px/s the default 10 px threshold is 0.1 s.
+    expect(snapToNearestEventStart(10.34, events, 100)).toBe(10.37);
+    expect(snapToNearestEventStart(10.05, events, 100)).toBe(10.0);
+  });
+
+  it("leaves a time alone when no event is close enough", () => {
+    // Nothing is ever dragged across the screen to an event nobody aimed at.
+    expect(snapToNearestEventStart(10.6, events, 100)).toBe(10.6);
+  });
+
+  it("narrows as the view zooms in, because the threshold is in pixels", () => {
+    // The same 0.05 s gap: at 100 px/s it is 5 px away and snaps; at 1000 px/s it is
+    // 50 px away and does not. That is what the eye expects of "near".
+    expect(snapToNearestEventStart(10.05, events, 100)).toBe(10.0);
+    expect(snapToNearestEventStart(10.05, events, 1000)).toBe(10.05);
+  });
+
+  it("widens as the view zooms out", () => {
+    expect(snapToNearestEventStart(10.5, events, 10)).toBe(10.37);
+  });
+
+  it("never snaps to a bounded event's end", () => {
+    // Only startSec is a target: an end is where a measured sound stopped, not a moment
+    // a player is asked to hit.
+    const bounded = [{ startSec: 20.0, endSec: 20.8 }];
+    expect(snapToNearestEventStart(20.79, bounded, 100)).toBe(20.79);
+    expect(snapToNearestEventStart(20.01, bounded, 100)).toBe(20.0);
+  });
+
+  it("resolves equidistant events the same way every time", () => {
+    const pair = [{ startSec: 5.0 }, { startSec: 5.2 }];
+    const forwards = snapToNearestEventStart(5.1, pair, 100);
+    const backwards = snapToNearestEventStart(5.1, [...pair].reverse(), 100);
+    expect(forwards).toBe(backwards);
+    expect(forwards).toBe(5.0);
+  });
+
+  it("copes with no events and with a nonsensical zoom", () => {
+    expect(snapToNearestEventStart(1.23, [], 100)).toBe(1.23);
+    expect(snapToNearestEventStart(1.23, events, 0)).toBe(1.23);
+  });
+
+  it("honours a caller-supplied threshold", () => {
+    // 10.6 is 0.23 s past the nearest start. A 10 px threshold at this zoom is 0.1 s
+    // and does not reach it; a 60 px one is 0.6 s and does.
+    expect(snapToNearestEventStart(10.6, events, 100, 10)).toBe(10.6);
+    expect(snapToNearestEventStart(10.6, events, 100, 60)).toBe(10.37);
   });
 });

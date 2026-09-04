@@ -8,9 +8,26 @@
  * by the end. Interpolating inside each real interval keeps every subdivision tied to
  * the beats either side of it.
  *
- * Analysis Events are deliberately not snap targets. An onset is an observation about
- * the recording; snapping a note to one would quietly turn the Analyzer into the author.
+ * Analysis Events are a snap target only when the author explicitly asks for it, in a
+ * mode of their own. An onset is an observation about the recording, not a beat, so
+ * having it silently attract notes alongside the grid would quietly turn the Analyzer
+ * into the author. Choosing the mode is the author saying which of the two they mean.
  */
+
+/**
+ * What the timeline snaps a raw click to.
+ *
+ * `beat` and `event` are different questions, not two strengths of the same one: a beat
+ * is where the music is counted, an onset is where a sound actually started. Mixing them
+ * into one "snap harder" control would hide which of the two a note was aligned to, so
+ * the modes are exclusive.
+ *
+ * Only `off` and `beat` survive a reload. The Project contract's `editor.snap` object is
+ * closed - `{enabled, division}` and nothing else - so there is nowhere to record a third
+ * mode without extending it, and `event` is experimental enough not to justify that. It
+ * reads back as `off`.
+ */
+export type SnapMode = "off" | "beat" | "event";
 
 /** `project.editor.snap`, as the Project contract defines it. */
 export interface SnapSettings {
@@ -20,6 +37,9 @@ export interface SnapSettings {
 }
 
 export const DEFAULT_SNAP: SnapSettings = { enabled: true, division: 1 };
+
+/** How close a click must be to an event start for event snapping to take it. */
+export const EVENT_SNAP_THRESHOLD_PX = 10;
 
 /** Divisions the toolbar offers. 1 is the detected beat itself. */
 export const SNAP_DIVISIONS = [1, 2, 3, 4, 6, 8] as const;
@@ -96,4 +116,42 @@ export function readSnapSettings(editor: unknown): SnapSettings {
         ? division
         : DEFAULT_SNAP.division,
   };
+}
+
+
+/**
+ * Snap to the nearest Analysis Event start, within a screen-distance threshold.
+ *
+ * The threshold is in pixels, not seconds, so it means the same thing to the hand at
+ * every zoom level: zoomed out, "near" covers a wide slice of time and snapping is
+ * coarse; zoomed in, it narrows until the author can place a note between two onsets.
+ * A time-based threshold would do the opposite of what the eye expects.
+ *
+ * Only `startSec` is a target. A bounded event's `endSec` is where a measured sound
+ * stopped, which is not a moment a player is asked to hit.
+ *
+ * Returns the raw time unchanged when nothing is close enough: nothing is ever dragged
+ * across the screen to an event the author was not aiming at.
+ */
+export function snapToNearestEventStart(
+  rawSec: number,
+  events: readonly { readonly startSec: number }[],
+  pixelsPerSecond: number,
+  thresholdPx: number = EVENT_SNAP_THRESHOLD_PX,
+): number {
+  if (events.length === 0 || pixelsPerSecond <= 0) return rawSec;
+  const thresholdSec = thresholdPx / pixelsPerSecond;
+
+  let bestSec = rawSec;
+  let bestDistance = thresholdSec;
+  for (const event of events) {
+    const distance = Math.abs(event.startSec - rawSec);
+    // Strictly nearer, so the earliest of several equidistant events wins and the
+    // result does not depend on the order they happen to be scanned in.
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestSec = event.startSec;
+    }
+  }
+  return bestSec;
 }

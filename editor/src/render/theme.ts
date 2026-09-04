@@ -36,12 +36,13 @@ export const theme = {
     vocals: "#d0708a",
   },
 
+  /**
+   * Only the stroke weight lives here. Where an event sits and how large it is are in
+   * core/eventGeometry.ts, because the hit test needs the same numbers and two copies
+   * would eventually disagree - which shows up as a click selecting the wrong event.
+   */
   event: {
     tickWidth: 2,
-    tickInsetPx: 8,
-    spanHeightPx: 5,
-    spanRadiusPx: 2,
-    minSpanWidthPx: 2,
   },
 
   /**
@@ -75,6 +76,24 @@ export const theme = {
 
   noteLaneBorder: "#202834",
   noteLaneLabel: "#7f8c9e",
+
+  /**
+   * The Analysis Event the author is consulting.
+   *
+   * Must not read as a selected Chart Note. A note is a filled block that gets brighter
+   * and gains a heavy white border when selected; a selected event keeps its lane colour
+   * and its own thin shape, and is called out by a bracket drawn around it plus a
+   * caret above - marks in the space around the event rather than a restyling of it,
+   * because the event itself is a measurement and should look the same either way.
+   */
+  selectedEvent: {
+    marker: "#ffffff",
+    halo: "rgba(255, 255, 255, 0.14)",
+    bracketWidth: 1.5,
+    bracketPadPx: 4,
+    caretHalfWidthPx: 4,
+    caretHeightPx: 5,
+  },
 
   playhead: "#f05b5b",
   playheadWidth: 1.5,

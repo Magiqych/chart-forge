@@ -14,15 +14,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AnalysisProjection } from "./core/analysis";
+import type { AnalysisProjection, ProjectedEvent } from "./core/analysis";
 import { ChartError, type Direction, type PlaceableType } from "./core/chart";
 import {
-  isDirty, markChartSaved, markSaved, openSession, place, remove, select, setSnap,
+  isDirty, markChartSaved, markSaved, openSession, place, placeAtEvent, remove,
+  select, selectEvent, setSnap, setSnapMode,
   type EditorSession,
 } from "./core/editorSession";
 import type { RowId } from "./core/lanes";
 import { describeFailure, ProjectLoadError } from "./core/project";
-import { buildSnapGrid, DEFAULT_SNAP, type SnapSettings } from "./core/snap";
+import {
+  buildSnapGrid, DEFAULT_SNAP, type SnapMode, type SnapSettings,
+} from "./core/snap";
 import { fitToWidth, maxBoundedDuration, type Viewport } from "./core/viewport";
 import {
   chooseProjectFile, confirmDiscard, openProject, saveChart, type OpenedProject,
@@ -60,6 +63,10 @@ export default function App(): React.JSX.Element {
   // Snap lives in the session instead, because the Project persists it.
   const [noteType, setNoteType] = useState<PlaceableType>("tap");
   const [direction, setDirection] = useState<Direction>("right");
+  // The lane `Place Note at Event` uses. A click on the timeline takes its lane from the
+  // band that was clicked; a placement from an event has no such position, so the author
+  // states the lane here. Nothing derives it from the event's stem.
+  const [eventLane, setEventLane] = useState(0);
 
   const audioRef = useRef<LoadedAudio | null>(null);
   const projection: AnalysisProjection | null = opened?.projection ?? null;
@@ -67,6 +74,8 @@ export default function App(): React.JSX.Element {
   const dirty = session ? isDirty(session) : false;
   const selectedNoteId = session?.selectedNoteId ?? null;
   const snap = session?.snap ?? DEFAULT_SNAP;
+  const snapMode: SnapMode = session?.snapMode ?? "beat";
+  const selectedEventId = session?.selectedEventId ?? null;
 
   const maxEventDurationSec = useMemo(
     () => (projection ? maxBoundedDuration(projection.events) : 0),
@@ -183,6 +192,48 @@ export default function App(): React.JSX.Element {
     setSession((current) => (current ? setSnap(current, next) : current));
   }, []);
 
+  const handleSnapMode = useCallback((mode: SnapMode) => {
+    setSession((current) => (current ? setSnapMode(current, mode) : current));
+  }, []);
+
+  // Consulting the overlay, not editing it: this dirties nothing and creates nothing.
+  const handleSelectEvent = useCallback((event: ProjectedEvent | null) => {
+    setSession((current) => (current ? selectEvent(current, event?.id ?? null) : current));
+  }, []);
+
+  /**
+   * The second, explicit step: place a note at the selected event's measured start.
+   *
+   * Selecting an event never creates anything, so this is where authoring happens. The
+   * lane and the note type come from the author's own choices in the toolbar, and the
+   * time is the event's `startSec` verbatim - deliberately not snapped, because the
+   * point of picking an event was to use where the sound actually is.
+   */
+  const handlePlaceAtEvent = useCallback(() => {
+    setSession((current) => {
+      if (!current || !current.selectedEventId) return current;
+      const event = projection?.events.find((e) => e.id === current.selectedEventId);
+      if (!event) return current;
+      try {
+        const next = placeAtEvent(
+          current,
+          event,
+          eventLane,
+          noteType,
+          noteType === "flick" ? direction : undefined,
+        );
+        setSaveMessage(
+          `Placed ${next.selectedNoteId} in lane ${eventLane + 1} at ` +
+            `${event.startSec.toFixed(3)}s from ${event.id} (exact, not snapped)`,
+        );
+        return next;
+      } catch (error) {
+        setSaveMessage(error instanceof ChartError ? error.message : String(error));
+        return current;
+      }
+    });
+  }, [projection, eventLane, noteType, direction]);
+
   const handleDeleteSelected = useCallback(() => {
     setSession((current) => {
       if (!current || !current.selectedNoteId) return current;
@@ -277,6 +328,14 @@ export default function App(): React.JSX.Element {
 
   const durationSec = projection?.audio.durationSec ?? 0;
 
+  const selectedEvent = useMemo<ProjectedEvent | null>(
+    () =>
+      selectedEventId && projection
+        ? (projection.events.find((event) => event.id === selectedEventId) ?? null)
+        : null,
+    [selectedEventId, projection],
+  );
+
   return (
     <div className="app">
       <Toolbar
@@ -308,14 +367,26 @@ export default function App(): React.JSX.Element {
         onDirection={setDirection}
         snap={snap}
         onSnap={handleSnap}
-        snapAvailable={snapGrid.length > 0}
+        snapMode={snapMode}
+        onSnapMode={handleSnapMode}
+        snapAvailable={projection !== null}
+        selectedEventLabel={selectedEvent ? `${selectedEvent.id} (${selectedEvent.type})` : null}
+        eventLane={eventLane}
+        onEventLane={setEventLane}
+        laneCount={chart?.laneCount ?? 0}
+        onPlaceAtEvent={handlePlaceAtEvent}
         selectedNoteId={selectedNoteId}
         onDeleteSelected={handleDeleteSelected}
         targetPath={opened?.summary.chartTargetPath ?? ""}
       />
 
       <div className="body">
-        <LayerPanel projection={projection} visible={visible} onToggle={toggleLayer} />
+        <LayerPanel
+          projection={projection}
+          visible={visible}
+          onToggle={toggleLayer}
+          selectedEvent={selectedEvent}
+        />
         <main className="stage">
           <Timeline
             projection={projection}
@@ -333,9 +404,12 @@ export default function App(): React.JSX.Element {
             chart={visible.has("notes") ? chart : null}
             snapGrid={snapGrid}
             snap={snap}
+            snapMode={snapMode}
             selectedNoteId={selectedNoteId}
             onPlace={handlePlace}
             onSelect={handleSelect}
+            selectedEventId={selectedEventId}
+            onSelectEvent={handleSelectEvent}
           />
           <footer className="stats">
             {stats

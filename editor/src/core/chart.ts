@@ -1,12 +1,14 @@
 /**
  * The Chart document the author is writing, and the commands that change it.
  *
- * This is a Chart, not an Analysis. Nothing in this module reads an Analysis Event, and
- * `placeNote` takes plain numbers rather than an event, so there is no code path by
- * which looking at the overlay can create a note. The author decides the time and the
- * lane; `chartNote.sourceEventId` stays a hand-authored back-reference the contract
- * describes as "never a claim that the note was generated from the event", and this MVP
- * does not write it at all.
+ * This is a Chart, not an Analysis. Nothing in this module reads an Analysis Event:
+ * `placeNote` takes plain numbers and at most an event *id*, so no property of an event
+ * - its stem, its pitch, its duration - can reach a note. The author decides the time,
+ * the lane and the type in every case.
+ *
+ * `chartNote.sourceEventId` is written only when the author placed the note by pointing
+ * at an event, and means what the contract says it means: "a human-authored
+ * back-reference ... never a claim that the note was generated from the event".
  *
  * `placeNote` and `deleteNote` are the only ways the note list changes. They are pure
  * and return a new state, so an undo stack can later be wrapped around them without
@@ -236,6 +238,16 @@ export interface PlaceNoteSpec {
   readonly lane: LaneIndex;
   readonly type: PlaceableType;
   readonly direction?: Direction;
+  /**
+   * The Analysis Event the author was looking at, when they placed the note by pointing
+   * at one.
+   *
+   * The contract calls this "a human-authored back-reference ... never a claim that the
+   * note was generated from the event", and that is exactly what it is here: the author
+   * still chose the lane, the type and whether to place anything at all. An ordinary
+   * click on the timeline sets nothing, because in that case no event was consulted.
+   */
+  readonly sourceEventId?: string;
 }
 
 export interface PlaceResult {
@@ -246,7 +258,9 @@ export interface PlaceResult {
 /**
  * Place one note. The editor command boundary for creating a note.
  *
- * Note the argument type: times and lanes, never an Analysis Event. An author who is
+ * Note the argument type: times, lanes and at most an event *id*, never an Analysis
+ * Event itself. Nothing in this module can read an event's stem, pitch or duration, so
+ * there is no way for one to decide a lane, a type or a note's end. An author who is
  * looking at an onset still has to decide where the note goes.
  */
 export function placeNote(state: ChartState, spec: PlaceNoteSpec): PlaceResult {
@@ -269,12 +283,19 @@ export function placeNote(state: ChartState, spec: PlaceNoteSpec): PlaceResult {
     throw new ChartError(`unknown direction ${spec.direction}`);
   }
 
+  if (spec.sourceEventId !== undefined && spec.sourceEventId.length === 0) {
+    throw new ChartError("sourceEventId must not be empty");
+  }
+
   const note: ChartNote = {
     id: formatNoteId(state.nextIdSeq),
     type: spec.type,
     timeSec,
     lane: spec.lane,
     ...(spec.type === "flick" && spec.direction ? { direction: spec.direction } : {}),
+    // Deliberately not deduplicated: an author may build a chord or a roll from one
+    // observed onset, so several notes legitimately cite the same event.
+    ...(spec.sourceEventId !== undefined ? { sourceEventId: spec.sourceEventId } : {}),
   };
 
   return {

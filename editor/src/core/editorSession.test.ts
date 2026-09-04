@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { emptyChart, projectChart, ChartError } from "./chart";
+import { serializeChart } from "./chart";
 import {
   isDirty, markChartSaved, markSaveFailed, markSaved, openSession,
-  place, remove, select, selectAt, setSnap,
+  place, placeAtEvent, remove, select, selectAt, selectEvent, setSnap, setSnapMode,
 } from "./editorSession";
-import { DEFAULT_SNAP, readSnapSettings, type SnapSettings } from "./snap";
+import {
+  buildSnapGrid, snapTime, DEFAULT_SNAP, readSnapSettings, type SnapSettings,
+} from "./snap";
 
 const blank = () => emptyChart({ audioPath: "song.wav", audioDurationSec: 8 });
 const tap = (timeSec: number, lane: number) => ({ timeSec, lane, type: "tap" as const });
@@ -208,5 +211,178 @@ describe("commands are pure", () => {
     expect(first.snap).toEqual(DEFAULT_SNAP);
     expect(fourth.snap).toEqual({ enabled: false, division: 4 });
     expect(second).not.toBe(first);
+  });
+});
+
+/** An Analysis Event, reduced to the two fields the placement command is allowed to see. */
+const EVENT = { id: "ev-000123", startSec: 45.16432026996767 };
+
+describe("place from an Analysis Event", () => {
+  it("uses the event's measured start as the note time", () => {
+    const session = placeAtEvent(fresh(), EVENT, 2, "tap");
+    expect(session.chart.notes).toHaveLength(1);
+    expect(session.chart.notes[0]!.timeSec).toBe(EVENT.startSec);
+  });
+
+  it("records the event as provenance", () => {
+    const note = placeAtEvent(fresh(), EVENT, 2, "tap").chart.notes[0]!;
+    expect(note.sourceEventId).toBe("ev-000123");
+  });
+
+  it("uses the lane the author chose", () => {
+    for (const lane of [0, 1, 2, 3, 4]) {
+      expect(placeAtEvent(fresh(), EVENT, lane, "tap").chart.notes[0]!.lane).toBe(lane);
+    }
+  });
+
+  it("takes nothing from the event but its start and its id", () => {
+    // The command's signature is the guarantee: an event's stem, pitch, type and
+    // duration are not parameters, so none of them can decide a lane or a note type.
+    // A vocals-derived event placed into lane 0 as a flick makes the point.
+    const session = placeAtEvent(fresh(), EVENT, 0, "flick", "up");
+    expect(session.chart.notes[0]).toMatchObject({
+      lane: 0, type: "flick", direction: "up", sourceEventId: "ev-000123",
+    });
+  });
+
+  it("is not affected by the beat snap setting", () => {
+    // The author picked this event because they wanted where the sound actually is;
+    // pulling the note back onto the grid would discard the reason for the gesture.
+    const grid = buildSnapGrid([{ timeSec: 45 }, { timeSec: 45.5 }, { timeSec: 46 }], 1);
+    expect(snapTime(EVENT.startSec, grid, DEFAULT_SNAP)).not.toBe(EVENT.startSec);
+
+    let session = setSnapMode(fresh(), "beat");
+    session = placeAtEvent(session, EVENT, 2, "tap");
+    expect(session.chart.notes[0]!.timeSec).toBe(EVENT.startSec);
+  });
+
+  it("allows several notes from one event", () => {
+    // A chord or a roll built from one observed onset is ordinary authoring, so the
+    // relationship is not 1:1 and a repeated sourceEventId is not an error.
+    let session = placeAtEvent(fresh(), EVENT, 0, "tap");
+    session = placeAtEvent(session, EVENT, 2, "tap");
+    session = placeAtEvent(session, EVENT, 4, "tap");
+
+    expect(session.chart.notes).toHaveLength(3);
+    expect(session.chart.notes.map((n) => n.sourceEventId))
+      .toEqual(["ev-000123", "ev-000123", "ev-000123"]);
+    expect(session.chart.notes.map((n) => n.lane)).toEqual([0, 2, 4]);
+    expect(new Set(session.chart.notes.map((n) => n.id)).size).toBe(3);
+  });
+
+  it("keeps the event selected so another note can follow", () => {
+    const session = placeAtEvent(selectEvent(fresh(), "ev-000123"), EVENT, 0, "tap");
+    expect(session.selectedEventId).toBe("ev-000123");
+    expect(session.selectedNoteId).toBe("n-0001");
+  });
+
+  it("survives serialisation, which is how it reaches disk and comes back", () => {
+    const session = placeAtEvent(fresh(), EVENT, 2, "tap");
+    const notes = serializeChart(session.chart)["notes"] as Record<string, unknown>[];
+    expect(notes[0]!["sourceEventId"]).toBe("ev-000123");
+    expect(notes[0]!["timeSec"]).toBe(EVENT.startSec);
+
+    const reloaded = projectChart(serializeChart(session.chart));
+    expect(reloaded.notes[0]!.sourceEventId).toBe("ev-000123");
+  });
+});
+
+describe("ordinary manual placement", () => {
+  it("records no sourceEventId, because no event was consulted", () => {
+    const note = place(fresh(), tap(1, 0)).chart.notes[0]!;
+    expect(note.sourceEventId).toBeUndefined();
+  });
+
+  it("omits the field entirely from the written document", () => {
+    const session = place(fresh(), tap(1, 0));
+    const notes = serializeChart(session.chart)["notes"] as Record<string, unknown>[];
+    expect(Object.keys(notes[0]!)).not.toContain("sourceEventId");
+  });
+
+  it("sits alongside event-placed notes in one chart", () => {
+    let session = place(fresh(), tap(1, 0));
+    session = placeAtEvent(session, EVENT, 1, "tap");
+    const sources = session.chart.notes.map((n) => n.sourceEventId);
+    expect(sources).toEqual([undefined, "ev-000123"]);
+  });
+});
+
+describe("Analysis event selection", () => {
+  it("dirties neither document", () => {
+    // Looking at read-only guidance is not editing.
+    const session = selectEvent(fresh(), "ev-000123");
+    expect(session.chartDirty).toBe(false);
+    expect(session.projectDirty).toBe(false);
+    expect(isDirty(session)).toBe(false);
+  });
+
+  it("changing which event is selected still dirties nothing", () => {
+    let session = selectEvent(fresh(), "ev-000123");
+    session = selectEvent(session, "ev-000456");
+    session = selectEvent(session, null);
+    expect(isDirty(session)).toBe(false);
+  });
+
+  it("is kept apart from the Chart note selection", () => {
+    let session = place(fresh(), tap(1, 0));
+    session = selectEvent(session, "ev-000123");
+    expect(session.selectedNoteId).toBe("n-0001");
+    expect(session.selectedEventId).toBe("ev-000123");
+
+    session = select(session, null);
+    expect(session.selectedEventId).toBe("ev-000123");
+    expect(session.selectedNoteId).toBeNull();
+  });
+
+  it("re-selecting the same event returns the identical session", () => {
+    const session = selectEvent(fresh(), "ev-000123");
+    expect(selectEvent(session, "ev-000123")).toBe(session);
+  });
+
+  it("placing from an event dirties the chart, not the project", () => {
+    const session = placeAtEvent(selectEvent(fresh(), "ev-000123"), EVENT, 0, "tap");
+    expect(session.chartDirty).toBe(true);
+    expect(session.projectDirty).toBe(false);
+  });
+});
+
+describe("snap mode", () => {
+  it("starts from what the project persisted", () => {
+    expect(openSession(blank(), { enabled: true, division: 4 }).snapMode).toBe("beat");
+    expect(openSession(blank(), { enabled: false, division: 4 }).snapMode).toBe("off");
+  });
+
+  it("turning beat snapping on is a project change", () => {
+    const session = setSnapMode(openSession(blank(), { enabled: false, division: 1 }), "beat");
+    expect(session.snap.enabled).toBe(true);
+    expect(session.projectDirty).toBe(true);
+  });
+
+  it("switching between off and event changes nothing the project stores", () => {
+    // Event snapping has nowhere to live in the contract's snap object, so it is not a
+    // stored setting and choosing it does not ask for a save.
+    const off = openSession(blank(), { enabled: false, division: 1 });
+    const event = setSnapMode(off, "event");
+    expect(event.snapMode).toBe("event");
+    expect(event.snap.enabled).toBe(false);
+    expect(event.projectDirty).toBe(false);
+  });
+
+  it("keeps the chosen division while snapping is off", () => {
+    let session = setSnap(fresh(), { enabled: true, division: 4 });
+    session = setSnapMode(session, "off");
+    expect(session.snap.division).toBe(4);
+    expect(setSnapMode(session, "beat").snap.division).toBe(4);
+  });
+
+  it("reloads event mode as off, because the contract cannot record it", () => {
+    const session = setSnapMode(fresh(), "event");
+    const written = { snap: { enabled: session.snap.enabled, division: session.snap.division } };
+    expect(openSession(blank(), readSnapSettings(written)).snapMode).toBe("off");
+  });
+
+  it("setting the same mode again returns the identical session", () => {
+    const session = fresh();
+    expect(setSnapMode(session, session.snapMode)).toBe(session);
   });
 });

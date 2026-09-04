@@ -6,9 +6,10 @@
  * cannot deliver.
  */
 
-import type { AnalysisProjection, LaneId } from "../core/analysis";
+import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
 import type { RowId } from "../core/lanes";
 import { theme } from "../render/theme";
+import { EventInspector } from "./EventInspector";
 
 export type LayerKey = RowId | "grid";
 
@@ -16,6 +17,12 @@ export interface LayerPanelProps {
   readonly projection: AnalysisProjection | null;
   readonly visible: ReadonlySet<LayerKey>;
   readonly onToggle: (key: LayerKey) => void;
+  /**
+   * The event the author is consulting. It lives in this sidebar with the rest of the
+   * analysis information, away from the authoring controls, because reading it is not
+   * editing anything.
+   */
+  readonly selectedEvent: ProjectedEvent | null;
 }
 
 interface LayerRow {
@@ -45,7 +52,9 @@ function countFor(projection: AnalysisProjection | null, key: LayerKey): string 
   return "";
 }
 
-export function LayerPanel({ projection, visible, onToggle }: LayerPanelProps): React.JSX.Element {
+export function LayerPanel(
+  { projection, visible, onToggle, selectedEvent }: LayerPanelProps,
+): React.JSX.Element {
   return (
     <aside className="layer-panel">
       <h2>Layers</h2>
@@ -65,6 +74,8 @@ export function LayerPanel({ projection, visible, onToggle }: LayerPanelProps): 
           </li>
         ))}
       </ul>
+
+      <EventInspector event={selectedEvent} projection={projection} />
 
       {projection ? (
         <div className="detector-list">

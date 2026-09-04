@@ -13,13 +13,20 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import type { AnalysisProjection, LaneId } from "../core/analysis";
+import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
 import { noteAt, type ChartState } from "../core/chart";
+import {
+  hitTestAnalysisEvent, pitchRangesFor, type LaneHitTarget, type PitchRanges,
+} from "../core/eventGeometry";
 import { findRow, laneAtY, layoutRows, rowsForChart, type RowId } from "../core/lanes";
-import { snapTime, type SnapSettings } from "../core/snap";
+import {
+  snapTime, snapToNearestEventStart, type SnapMode, type SnapSettings,
+} from "../core/snap";
 import {
   clampViewportStart,
   panBySeconds,
+  viewportEndSec,
+  visibleSlice,
   xToTime,
   zoomAtAnchor,
   type Viewport,
@@ -55,16 +62,22 @@ export interface TimelineProps {
   readonly chart: ChartState | null;
   readonly snapGrid: readonly number[];
   readonly snap: SnapSettings;
+  readonly snapMode: SnapMode;
   readonly selectedNoteId: string | null;
   readonly onPlace: (timeSec: number, lane: number) => void;
   readonly onSelect: (noteId: string | null) => void;
+
+  /** Analysis event selection. Read-only consultation of the overlay. */
+  readonly selectedEventId: string | null;
+  readonly onSelectEvent: (event: ProjectedEvent | null) => void;
 }
 
 export function Timeline(props: TimelineProps): React.JSX.Element {
   const {
     projection, view, onViewChange, playheadSec, onSeek,
     visibleRows, showGrid, waveform, waveformDurationSec, maxEventDurationSec, onStats,
-    onNotesStats, chart, snapGrid, snap, selectedNoteId, onPlace, onSelect,
+    onNotesStats, chart, snapGrid, snap, snapMode, selectedNoteId, onPlace, onSelect,
+    selectedEventId, onSelectEvent,
   } = props;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -75,6 +88,11 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
   const [widthPx, setWidthPx] = useState(1000);
   const [preview, setPreview] = useState<PlacementPreview | null>(null);
   const dragRef = useRef<{ x: number; startSec: number } | null>(null);
+
+  const pitchRanges = useMemo<PitchRanges | null>(
+    () => (projection ? pitchRangesFor(projection) : null),
+    [projection],
+  );
 
   const rows = useMemo(() => rowsForChart(chart?.laneCount ?? 0), [chart?.laneCount]);
   const layout = useMemo(
@@ -120,6 +138,8 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         view: { ...view, widthPx },
         layout,
         projection,
+        pitchRanges,
+        selectedEventId,
         showGrid,
         visibleLanes,
         waveform,
@@ -130,7 +150,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     });
     return () => cancelAnimationFrame(frame);
   }, [
-    view, widthPx, layout, projection, showGrid, visibleRows,
+    view, widthPx, layout, projection, pitchRanges, selectedEventId, showGrid, visibleRows,
     waveform, waveformDurationSec, maxEventDurationSec, onStats,
   ]);
 
@@ -157,6 +177,64 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
 
   const current = useMemo(() => ({ ...view, widthPx }), [view, widthPx]);
 
+  /**
+   * The events a click can reach: the visible slice of each *visible* lane.
+   *
+   * Built from the same range index the renderer uses, so a click never scans all 2258
+   * events, and a lane whose layer is switched off simply is not among the targets -
+   * which is what makes a hidden event unselectable without a special case for it.
+   */
+  const hitTargets = useCallback((): readonly LaneHitTarget[] => {
+    if (!projection || !pitchRanges) return [];
+    const from = current.startSec;
+    const to = viewportEndSec(current);
+    const targets: LaneHitTarget[] = [];
+    for (const lane of ["drums", "other", "bass", "vocals"] as const) {
+      if (!visibleRows.has(lane)) continue;
+      const row = findRow(layout, lane);
+      if (!row) continue;
+      targets.push({
+        lane,
+        row,
+        range: pitchRanges[lane],
+        events: visibleSlice(projection.eventsByLane[lane], from, to, maxEventDurationSec),
+      });
+    }
+    return targets;
+  }, [projection, pitchRanges, current, visibleRows, layout, maxEventDurationSec]);
+
+  /**
+   * Apply whichever snapping the author asked for.
+   *
+   * The modes are exclusive: a beat and an onset are different questions, so a note is
+   * aligned to one or the other and it is always clear which. `Place Note at Event` does
+   * not come through here at all - it uses the event's measured start verbatim.
+   */
+  const snapRawTime = useCallback(
+    (rawSec: number): number => {
+      if (snapMode === "beat") return snapTime(rawSec, snapGrid, snap);
+      if (snapMode === "event") {
+        let best = rawSec;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const target of hitTargets()) {
+          const candidate = snapToNearestEventStart(
+            rawSec,
+            target.events,
+            current.pixelsPerSecond,
+          );
+          const distance = Math.abs(candidate - rawSec);
+          if (candidate !== rawSec && distance < bestDistance) {
+            bestDistance = distance;
+            best = candidate;
+          }
+        }
+        return best;
+      }
+      return rawSec;
+    },
+    [snapMode, snapGrid, snap, hitTargets, current.pixelsPerSecond],
+  );
+
   /** Where the pointer is, in chart terms. Null outside the notes row. */
   const chartTargetAt = useCallback(
     (x: number, y: number): { timeSec: number; rawSec: number; lane: number } | null => {
@@ -166,9 +244,9 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
       const lane = laneAtY(row, chart.laneCount, y);
       if (lane === null) return null;
       const rawSec = Math.max(0, xToTime(x, current));
-      return { timeSec: Math.max(0, snapTime(rawSec, snapGrid, snap)), rawSec, lane };
+      return { timeSec: Math.max(0, snapRawTime(rawSec)), rawSec, lane };
     },
-    [chart, layout, current, snapGrid, snap],
+    [chart, layout, current, snapRawTime],
   );
 
   const handleWheel = useCallback(
@@ -217,10 +295,23 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         onPlace(target.timeSec, target.lane);
         return;
       }
+      // Outside the notes row the click lands on the analysis overlay. Hitting an event
+      // selects it - a read-only consultation that creates nothing - and anything else
+      // is a seek, so empty space still moves the playhead as it always did.
+      const eventHit = hitTestAnalysisEvent(x, y, current, hitTargets());
+      if (eventHit) {
+        onSelectEvent(eventHit.event);
+        return;
+      }
+
       onSelect(null);
+      onSelectEvent(null);
       onSeek(Math.max(0, xToTime(x, current)));
     },
-    [view.startSec, current, chart, onSeek, chartTargetAt, onPlace, onSelect],
+    [
+      view.startSec, current, chart, onSeek, chartTargetAt, onPlace, onSelect,
+      hitTargets, onSelectEvent,
+    ],
   );
 
   const handlePointerMove = useCallback(
@@ -242,11 +333,11 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
       const target = chartTargetAt(x, y);
       setPreview(
         target
-          ? { timeSec: target.timeSec, lane: target.lane, snapped: snap.enabled }
+          ? { timeSec: target.timeSec, lane: target.lane, snapped: snapMode !== "off" }
           : null,
       );
     },
-    [view.pixelsPerSecond, current, durationSec, onViewChange, chartTargetAt, snap.enabled],
+    [view.pixelsPerSecond, current, durationSec, onViewChange, chartTargetAt, snapMode],
   );
 
   const endDrag = useCallback(() => {

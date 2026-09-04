@@ -11,7 +11,8 @@
  */
 
 import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
-import { findRow, pitchRange, pitchToY, type Layout } from "../core/lanes";
+import { eventBox, type PitchRange, type PitchRanges } from "../core/eventGeometry";
+import { findRow, type Layout } from "../core/lanes";
 import { timeToX, viewportEndSec, visibleSlice, type Viewport } from "../core/viewport";
 import { theme } from "./theme";
 
@@ -19,6 +20,14 @@ export interface Scene {
   readonly view: Viewport;
   readonly layout: Layout;
   readonly projection: AnalysisProjection | null;
+  /**
+   * Per-lane pitch scales, computed by the caller so that the hit test and the renderer
+   * position a pitched event identically. Working them out separately is how a click
+   * ends up selecting an event other than the one under the pointer.
+   */
+  readonly pitchRanges: PitchRanges | null;
+  /** The Analysis Event the author has selected, if any. Drawn, never modified. */
+  readonly selectedEventId: string | null;
   readonly showGrid: boolean;
   readonly visibleLanes: ReadonlySet<LaneId>;
   /** Display envelope, not playback data: min/max pairs per pixel column. */
@@ -38,8 +47,6 @@ export class TimelineRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private dpr = 1;
-  private pitchRanges = new Map<LaneId, { minMidi: number; maxMidi: number }>();
-  private pitchRangeSource: AnalysisProjection | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -179,11 +186,14 @@ export class TimelineRenderer {
     const projection = scene.projection;
     if (!projection) return 0;
 
-    this.refreshPitchRanges(projection);
-
     const from = scene.view.startSec;
     const to = viewportEndSec(scene.view);
     let drawn = 0;
+    let selection: {
+      event: ProjectedEvent;
+      row: { topPx: number; heightPx: number };
+      range: PitchRange;
+    } | null = null;
 
     for (const lane of ["drums", "other", "bass", "vocals"] as const) {
       if (!scene.visibleLanes.has(lane)) continue;
@@ -197,8 +207,72 @@ export class TimelineRenderer {
         scene.maxEventDurationSec,
       );
       drawn += this.drawLane(scene, events, lane, row);
+
+      // Drawn after all the lanes so the marks are never covered by a later lane.
+      if (scene.selectedEventId !== null) {
+        const selected = events.find((event) => event.id === scene.selectedEventId);
+        if (selected) {
+          const range = scene.pitchRanges?.[lane] ?? { minMidi: 36, maxMidi: 84 };
+          selection = { event: selected, row, range };
+        }
+      }
+    }
+
+    if (selection) {
+      this.drawSelectedEvent(scene, selection.event, selection.row, selection.range);
     }
     return drawn;
+  }
+
+  /**
+   * Call out the selected event without restyling it.
+   *
+   * A bracket around it and a caret above, in white, drawn in the space beside the event
+   * rather than on it. The event keeps its lane colour and its own shape, because it is
+   * a measurement and looks the same whether or not anyone is looking at it - and
+   * because a selected Chart Note is exactly the opposite treatment, a filled block that
+   * brightens and gains a heavy border. The two can never be mistaken for each other.
+   */
+  private drawSelectedEvent(
+    scene: Scene,
+    event: ProjectedEvent,
+    row: { topPx: number; heightPx: number },
+    range: PitchRange,
+  ): void {
+    const { ctx } = this;
+    const box = eventBox(event, row, scene.view, range);
+    const pad = theme.selectedEvent.bracketPadPx;
+    const left = box.leftPx - pad;
+    const right = box.rightPx + pad;
+    const top = box.topPx - pad;
+    const bottom = box.bottomPx + pad;
+    if (right < 0 || left > scene.view.widthPx) return;
+
+    ctx.fillStyle = theme.selectedEvent.halo;
+    ctx.fillRect(left, top, right - left, bottom - top);
+
+    ctx.strokeStyle = theme.selectedEvent.marker;
+    ctx.lineWidth = theme.selectedEvent.bracketWidth;
+    const arm = Math.min(6, (bottom - top) / 2);
+    ctx.beginPath();
+    // Corner brackets rather than a full rectangle, so a dense drums lane does not turn
+    // into a wall of boxes when the selection sits among its neighbours.
+    ctx.moveTo(left, top + arm); ctx.lineTo(left, top); ctx.lineTo(left + arm, top);
+    ctx.moveTo(right - arm, top); ctx.lineTo(right, top); ctx.lineTo(right, top + arm);
+    ctx.moveTo(left, bottom - arm); ctx.lineTo(left, bottom); ctx.lineTo(left + arm, bottom);
+    ctx.moveTo(right - arm, bottom); ctx.lineTo(right, bottom); ctx.lineTo(right, bottom - arm);
+    ctx.stroke();
+
+    // A caret at the event's start, which is the only moment "place a note here" uses.
+    const caretX = box.leftPx;
+    const caretTop = row.topPx + 1;
+    ctx.fillStyle = theme.selectedEvent.marker;
+    ctx.beginPath();
+    ctx.moveTo(caretX, caretTop + theme.selectedEvent.caretHeightPx);
+    ctx.lineTo(caretX - theme.selectedEvent.caretHalfWidthPx, caretTop);
+    ctx.lineTo(caretX + theme.selectedEvent.caretHalfWidthPx, caretTop);
+    ctx.closePath();
+    ctx.fill();
   }
 
   private drawLane(
@@ -209,7 +283,7 @@ export class TimelineRenderer {
   ): number {
     const { ctx } = this;
     const colour = theme.lanes[lane];
-    const range = this.pitchRanges.get(lane) ?? { minMidi: 36, maxMidi: 84 };
+    const range: PitchRange = scene.pitchRanges?.[lane] ?? { minMidi: 36, maxMidi: 84 };
     let drawn = 0;
 
     ctx.strokeStyle = colour;
@@ -217,40 +291,40 @@ export class TimelineRenderer {
     ctx.lineWidth = theme.event.tickWidth;
 
     for (const event of events) {
-      const x = timeToX(event.startSec, scene.view);
+      // One source of geometry, shared with the hit test: an event is drawn exactly
+      // where a click will find it.
+      const box = eventBox(event, row, scene.view, range);
+      if (box.rightPx < -4 || box.leftPx > scene.view.widthPx + 4) continue;
 
       // The switch is on endKind, never on "does endSec exist". A future "unknown"
       // must not silently fall into either of the other two shapes.
       switch (event.endKind) {
         case "instantaneous": {
-          if (x < -4 || x > scene.view.widthPx + 4) continue;
-          const inset = theme.event.tickInsetPx;
           ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, row.topPx + inset);
-          ctx.lineTo(Math.round(x) + 0.5, row.topPx + row.heightPx - inset);
+          ctx.moveTo(Math.round(box.leftPx) + 0.5, box.topPx);
+          ctx.lineTo(Math.round(box.leftPx) + 0.5, box.bottomPx);
           ctx.stroke();
           drawn += 1;
           break;
         }
         case "bounded": {
-          const endX = timeToX(event.endSec ?? event.startSec, scene.view);
-          if (endX < -4 || x > scene.view.widthPx + 4) continue;
-          const y = event.pitch
-            ? pitchToY(event.pitch.midi, row, range)
-            : row.topPx + row.heightPx / 2;
-          const width = Math.max(theme.event.minSpanWidthPx, endX - x);
-          ctx.fillRect(x, y - theme.event.spanHeightPx / 2, width, theme.event.spanHeightPx);
+          ctx.fillRect(
+            box.leftPx,
+            box.topPx,
+            box.rightPx - box.leftPx,
+            box.bottomPx - box.topPx,
+          );
           drawn += 1;
           break;
         }
         case "unknown": {
           // Deliberately distinct: a mark for the known start, then a fading tail so
           // it never reads as a measured end.
-          if (x < -4 || x > scene.view.widthPx + 4) continue;
+          const x = box.leftPx;
           const y = row.topPx + row.heightPx / 2;
           ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, row.topPx + theme.event.tickInsetPx);
-          ctx.lineTo(Math.round(x) + 0.5, row.topPx + row.heightPx - theme.event.tickInsetPx);
+          ctx.moveTo(Math.round(x) + 0.5, box.topPx);
+          ctx.lineTo(Math.round(x) + 0.5, box.bottomPx);
           ctx.stroke();
           const gradient = ctx.createLinearGradient(x, 0, x + 24, 0);
           gradient.addColorStop(0, colour);
@@ -264,16 +338,6 @@ export class TimelineRenderer {
       }
     }
     return drawn;
-  }
-
-  /** Bass and vocals occupy very different registers, so each lane gets its own scale. */
-  private refreshPitchRanges(projection: AnalysisProjection): void {
-    if (this.pitchRangeSource === projection) return;
-    this.pitchRanges.clear();
-    for (const lane of ["bass", "vocals"] as const) {
-      this.pitchRanges.set(lane, pitchRange(projection.eventsByLane[lane]));
-    }
-    this.pitchRangeSource = projection;
   }
 
   private drawRuler(scene: Scene): void {

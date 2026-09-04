@@ -229,3 +229,66 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The at-event controls read as one unit: choosing a lane and placing are a pair. */
+.chartbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  border: 1px solid #35455c;
+  border-radius: 5px;
+  background: #1f293a;
+}
+
+.chartbar-grouplabel {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7fa6e0;
+}
+
+/* The selected-event readout. Quiet: it reports a measurement, it does not offer an
+   action, and it must not compete with the chart bar. */
+.inspector {
+  margin: 4px 0 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.inspector h2 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.inspector-empty {
+  margin: 0;
+  font-size: 11px;
+  color: #5d6a7a;
+}
+
+.inspector-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.inspector-grid dt { color: var(--muted); }
+
+.inspector-grid dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.inspector-grid .numeric {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector-id { color: var(--muted); }

@@ -20,9 +20,9 @@
 
 import {
   deleteNote, noteAt, placeNote,
-  type ChartNote, type ChartState, type PlaceNoteSpec,
+  type ChartNote, type ChartState, type Direction, type PlaceableType, type PlaceNoteSpec,
 } from "./chart";
-import { DEFAULT_SNAP, type SnapSettings } from "./snap";
+import { DEFAULT_SNAP, type SnapMode, type SnapSettings } from "./snap";
 
 export interface EditorSession {
   readonly chart: ChartState;
@@ -37,10 +37,28 @@ export interface EditorSession {
   /** True when the project's editor settings differ from what is on disk. */
   readonly projectDirty: boolean;
   /**
+   * Which of beat and Analysis Event snapping is active.
+   *
+   * Working state. `off` and `beat` are recoverable from the persisted
+   * `snap.enabled`; `event` is not, because the contract's snap object has no room for
+   * a third mode, so it reads back as `off` after a reload.
+   */
+  readonly snapMode: SnapMode;
+  /**
    * The selected note, if any. Working state: it steers the next command, is never
    * written into either document, and never makes anything dirty.
    */
   readonly selectedNoteId: string | null;
+  /**
+   * The selected Analysis Event, if any.
+   *
+   * Held apart from `selectedNoteId` on purpose: one is a guide object the author is
+   * consulting, the other an authoring object they own, and conflating them is exactly
+   * the confusion this Editor exists to avoid. Temporary state - it reaches neither the
+   * Chart nor the Project, and selecting an event dirties nothing, because looking at
+   * the analysis is not editing.
+   */
+  readonly selectedEventId: string | null;
 }
 
 /** What the UI shows: one indicator over both documents. */
@@ -53,12 +71,52 @@ export function openSession(
   chart: ChartState,
   snap: SnapSettings = DEFAULT_SNAP,
 ): EditorSession {
-  return { chart, snap, chartDirty: false, projectDirty: false, selectedNoteId: null };
+  return {
+    chart,
+    snap,
+    snapMode: snap.enabled ? "beat" : "off",
+    chartDirty: false,
+    projectDirty: false,
+    selectedNoteId: null,
+    selectedEventId: null,
+  };
 }
 
 /** Place a note and select it, so the next Delete acts on what was just placed. */
 export function place(session: EditorSession, spec: PlaceNoteSpec): EditorSession {
   const { state, note } = placeNote(session.chart, spec);
+  return { ...session, chart: state, chartDirty: true, selectedNoteId: note.id };
+}
+
+/**
+ * Place a note at a time the author took from an Analysis Event they selected.
+ *
+ * The separation from `place` is the whole design. This is a second, deliberate
+ * authoring action after selecting an event - selecting one creates nothing - and the
+ * caller still supplies the lane and the type, which no property of the event
+ * influences. What the event contributes is one number, its measured start, plus its id
+ * recorded as provenance.
+ *
+ * The time arrives already decided and is not snapped again: the author picked this
+ * event precisely because they wanted where the sound actually is, and pulling it back
+ * onto the beat grid would throw away the reason for the whole gesture.
+ */
+export function placeAtEvent(
+  session: EditorSession,
+  event: { readonly id: string; readonly startSec: number },
+  lane: number,
+  type: PlaceableType,
+  direction?: Direction,
+): EditorSession {
+  const { state, note } = placeNote(session.chart, {
+    timeSec: event.startSec,
+    lane,
+    type,
+    ...(direction !== undefined ? { direction } : {}),
+    sourceEventId: event.id,
+  });
+  // The event stays selected: placing one note from it is not a reason to stop looking
+  // at it, and an author may want a second note in another lane at the same instant.
   return { ...session, chart: state, chartDirty: true, selectedNoteId: note.id };
 }
 
@@ -84,6 +142,37 @@ export function setSnap(session: EditorSession, snap: SnapSettings): EditorSessi
     return session;
   }
   return { ...session, snap, projectDirty: true };
+}
+
+/**
+ * Choose which kind of snapping is active.
+ *
+ * Only `beat` corresponds to the persisted `snap.enabled`, so switching to or from it is
+ * a project change; switching between `off` and `event` is not, since both leave the
+ * stored settings saying the same thing. The division is untouched either way, so
+ * turning beat snapping off and on again returns to the subdivision that was chosen.
+ */
+export function setSnapMode(session: EditorSession, mode: SnapMode): EditorSession {
+  if (mode === session.snapMode) return session;
+  const enabled = mode === "beat";
+  const snapChanged = enabled !== session.snap.enabled;
+  return {
+    ...session,
+    snapMode: mode,
+    snap: { ...session.snap, enabled },
+    projectDirty: session.projectDirty || snapChanged,
+  };
+}
+
+/**
+ * Select or clear the Analysis Event the author is consulting.
+ *
+ * Dirties nothing: the Analysis is read-only guidance, and pointing at part of it
+ * changes no document.
+ */
+export function selectEvent(session: EditorSession, eventId: string | null): EditorSession {
+  if (eventId === session.selectedEventId) return session;
+  return { ...session, selectedEventId: eventId };
 }
 
 export function select(session: EditorSession, noteId: string | null): EditorSession {
