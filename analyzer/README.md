@@ -54,12 +54,12 @@ leaving the creative decisions with the author.
 
 ## Implementation status
 
-The Analyzer stack is now being validated as a Python 3.11 / PyTorch CUDA pipeline.
-Source separation with `demucs-infer` / `htdemucs` and beat/downbeat tracking with
-Beat This! have been verified on Windows with an NVIDIA GPU.
+The Analyzer stack is being validated as a Python 3.11 / PyTorch CUDA pipeline. Source
+separation, beat/downbeat tracking, monophonic pitch extraction and onset extraction have
+now been verified independently on the target Windows / CUDA environment.
 
-Pitch tracking, onset extraction and the first real Analysis document are not implemented
-yet.
+The stages have not yet been integrated into an Analyzer implementation, and the first
+real Analysis document has not yet been emitted.
 
 See [`../docs/analyzer-stack.md`](../docs/analyzer-stack.md) for the selected stack,
 verified environment, measurements, open design questions and next steps.
