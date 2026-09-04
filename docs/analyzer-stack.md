@@ -897,30 +897,72 @@ Nothing about the open gaps should be read as solved.
 ## Next steps
 
 ```text
-DONE
-  Python 3.11 / uv
-  CUDA PyTorch
-  demucs-infer / htdemucs
-  Beat This!
-  torchcrepe
-  librosa onset
+IMPLEMENTED  (analyzer/, one CLI command)
+  ingest
+  separate
+  beat
+  pitch
+  onset
+  merge
+  emit Analysis 0.2
 
 NEXT
-  run integrated real-song analysis:
-    full mix -> Beat This!
-    bass     -> torchcrepe
-    vocals   -> torchcrepe
-    drums    -> librosa onset
-    other    -> librosa onset
+  dependency manifest / fresh-environment bootstrap
+  confidence calibration design            (G2, G9)
+  voiced-run segmentation beyond a bare threshold
+  decide what to do about drum bleed in the other branch
 
-THEN
-  emit first real Analysis JSON
-  validate against contract
-  review schema gaps against actual output
+STILL OPEN
+  G2  confidence semantics
+  G4  pitch curves
+  G5  time signature
+  G7  frame-level curve storage
+  G9  normalized prominence
 ```
 
-Every phase-1 stage has now been verified **in isolation**. Nothing has yet been run as
-one pipeline, and no Analysis document has been produced.
+Phase 1 is no longer a set of isolated experiments: `python -m analyzer <audio>
+--output-dir <dir>` runs the whole chain and writes a contract-valid Analysis 0.2
+document. See [`../analyzer/README.md`](../analyzer/README.md).
+
+### What the first formal runs showed
+
+The implementation was checked against the proof-of-concept reference on the same track.
+Run **on the same stems** it reproduces the PoC exactly - identical event counts
+(1093 / 225 / 463 / 477) and every timestamp identical to the last decimal. Run
+end-to-end from the audio, the counts move by a few percent, and the reason is upstream:
+
+**htdemucs separation is not bit-reproducible on this GPU.** Two runs over the same input
+produced stems sharing only 2-4% of their samples exactly, with a mean absolute
+difference around 0.005 and a maximum around 0.18. That is inaudible, but it is enough to
+move a peak across a picking threshold or a periodicity value across the voiced cut, so
+every branch downstream of separation inherits the variation.
+
+What that means for reproducibility of an Analysis document:
+
+```text
+deterministic across runs
+  document structure, detector registry, audio.sha256, tempo.bpm
+  beats and downbeats - 461/461 identical to the microsecond, because the beat
+    branch reads the original mix and never touches a stem
+  endKind vocabulary, detectorId assignment, event ordering, absence of confidence
+
+not deterministic
+  stem hashes, and therefore every count and boundary downstream of them
+  drums onsets  - p95 within about 6 ms, but counts drift ~0.1%
+  other onsets  - far looser, p95 in the hundreds of milliseconds
+  pitch-run boundaries and counts - runs drift by a few percent
+  pitch values  - median ~3-4 cents between runs
+```
+
+The pitch differences above 50 cents are a **matching artefact, not f0 drift**: pairs
+exceeding 50 cents have a median duration difference of 220-230 ms, while pairs under
+50 cents differ in duration by 0 ms. They are different musical spans that happen to
+start within 20 ms of each other. Measured on identical input, torchcrepe's f0 drift
+stays under 20 cents and its periodicity is bit-identical.
+
+The practical consequence: an Analysis document's **structure and beat grid are
+reproducible, its event set is not**, and a document hash is not a stable identity.
+Anything that needs exact reproducibility must pin the stems, not just the input audio.
 
 The next milestone is running one real song through the whole chain once:
 
