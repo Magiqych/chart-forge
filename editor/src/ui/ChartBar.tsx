@@ -120,7 +120,7 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
         >
           <option value="off">Off</option>
           <option value="beat">Beat</option>
-          <option value="event">Analysis event (session)</option>
+          <option value="event">Event (session)</option>
         </select>
       </label>
 
