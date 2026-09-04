@@ -1,0 +1,30 @@
+# Chart Forge Analyzer - PyTorch with CUDA 12.6
+#
+# Install this FIRST, before analyzer/requirements.txt.
+#
+# These two cannot be reproduced from PyPI. The PyPI wheels for `torch` and
+# `torchaudio` are different builds; the `+cu126` local version identifiers exist only
+# on PyTorch's own index, which is why the index URL is pinned in this file rather than
+# left to the reader. Installing with plain `pip install torch` yields a working but
+# DIFFERENT build, and the Analyzer is a CUDA pipeline that refuses to run without a
+# usable GPU.
+#
+#   uv pip install -r analyzer/requirements-cuda.txt
+#
+# `torch` is a direct dependency: analyzer/cli.py, beat.py, pitch.py and separation.py
+# import it.
+#
+# `torchaudio` is NOT imported by any Analyzer module. It is here because beat-this,
+# demucs-infer and torchcrepe all require it, and it must come from the same CUDA index
+# as torch - a torchaudio installed from PyPI alongside a +cu126 torch is the classic way
+# to end up with a broken pair. 2.11.0 is TorchAudio's terminal release: the project
+# entered maintenance at 2.8 and is documented as compatible with torch 2.11 and every
+# later release, so pairing it with torch 2.13 is correct and not a mismatch.
+#
+# Verified on: Windows 11, NVIDIA driver 595.97, RTX 3060, CUDA runtime 12.6.
+# A system CUDA Toolkit is NOT required - the runtime ships inside these wheels.
+
+--index-url https://download.pytorch.org/whl/cu126
+
+torch==2.13.0+cu126
+torchaudio==2.11.0+cu126

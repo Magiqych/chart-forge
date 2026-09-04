@@ -8,6 +8,96 @@ in the music and when.
   [`../schemas/analysis.schema.json`](../schemas/analysis.schema.json).
 - **Example output:** [`../examples/analysis.example.json`](../examples/analysis.example.json).
 
+## Requirements
+
+| | |
+| --- | --- |
+| Python | **3.11** (verified on 3.11.15) |
+| GPU | **required** - NVIDIA with CUDA. There is no CPU path. |
+| System CUDA Toolkit | not needed - the runtime ships inside the PyTorch wheels |
+
+The Analyzer checks `torch.cuda.is_available()` before doing any work and stops with an
+error if it is false. It does **not** fall back to CPU: that would silently turn a
+one-minute run into something far longer, so an unusable GPU is treated as a
+configuration problem rather than a slower path.
+
+librosa 1.0.0 requires Python >= 3.12, so this component stays on Python 3.11 with
+librosa 0.11.0. Moving to librosa 1.x means moving the Analyzer's Python version.
+
+## Environment setup
+
+The Analyzer manages its own environment. It does not share one with `editor/`,
+`player/` or the contract tests - the contract tests are standard library only and need
+nothing installed.
+
+```powershell
+# 1. a Python 3.11 environment, anywhere you like
+uv venv --python 3.11 .venv
+
+# 2. PyTorch with CUDA 12.6 - MUST come first, see below
+uv pip install --python .venv\Scripts\python.exe -r analyzer\requirements-cuda.txt
+
+# 3. the Analyzer's other direct dependencies
+uv pip install --python .venv\Scripts\python.exe -r analyzer\requirements.txt
+```
+
+`pip` works in place of `uv pip` if you prefer.
+
+### Why PyTorch is installed separately
+
+`torch==2.13.0+cu126` and `torchaudio==2.11.0+cu126` do not exist on PyPI. The `+cu126`
+builds live only on PyTorch's own index, and
+[`requirements-cuda.txt`](requirements-cuda.txt) pins that index inside the file so the
+right build is chosen without the reader having to remember a flag.
+
+**Order matters.** Several of the packages in `requirements.txt` require `torch` and
+`torchaudio`. With the CUDA builds already installed those requirements are satisfied and
+left alone; installing in the other order pulls the PyPI builds instead and you end up
+with a mismatched pair.
+
+If you need a different CUDA version, change the index URL and the two `+cuXXX` pins
+together - they must match.
+
+### Verifying the environment
+
+```powershell
+# CUDA is visible
+.venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+
+# unit tests - pure logic, no model is loaded and no GPU is needed
+.venv\Scripts\python.exe -m unittest discover -s analyzer\tests
+
+# the CLI starts
+.venv\Scripts\python.exe -m analyzer --help
+
+# the contract tests still pass (standard library only)
+.venv\Scripts\python.exe tests\validate_contracts.py
+```
+
+### Model weights
+
+Two models download themselves on first use, into PyTorch's usual hub cache
+(`%USERPROFILE%\.cache\torch\hub\checkpoints`), never into this repository:
+
+| Model | Size | Source |
+| --- | ---: | --- |
+| htdemucs | ~80 MiB | dl.fbaipublicfiles.com |
+| Beat This! `final0` | ~77 MiB | cloud.cp.jku.at |
+
+torchcrepe is the exception: its weights ship inside the wheel, so it downloads nothing.
+
+The cache is shared between environments on one machine, so a second environment on the
+same machine will not re-download. A genuinely fresh machine needs about 157 MiB and
+network access on the first run.
+
+### A note on reproducibility
+
+Following these steps reproduces the **verified dependency set**. It does not make a run
+reproducible: htdemucs separation is not bit-reproducible on the same GPU with the same
+input, and that variation propagates into the event set. Beats, document structure and
+ordering are stable; event counts and boundaries move by a few percent between runs. See
+[`../docs/analyzer-stack.md`](../docs/analyzer-stack.md).
+
 ## Usage
 
 ```powershell
@@ -100,7 +190,10 @@ the target Windows / CUDA environment.
 
 Verified environment: Python 3.11.15 with torch 2.13.0+cu126, torchaudio 2.11.0+cu126,
 demucs-infer 4.2.2, beat-this 1.1.0, torchcrepe 0.0.24, librosa 0.11.0, soundfile 0.14.0,
-numpy 2.4.6. There is deliberately no dependency manifest yet.
+numpy 2.4.6 - reproduced from [`requirements.txt`](requirements.txt) and
+[`requirements-cuda.txt`](requirements-cuda.txt) into a clean Python 3.11 environment.
+Those two files list only what the Analyzer imports; transitive dependencies are left to
+the resolver, and there is no lock file.
 
 See [`../docs/analyzer-stack.md`](../docs/analyzer-stack.md) for the selected stack,
 measurements, open design questions and next steps.

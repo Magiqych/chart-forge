@@ -1,0 +1,38 @@
+# Chart Forge Analyzer - direct dependencies (Python 3.11)
+#
+# Install analyzer/requirements-cuda.txt FIRST, then this file:
+#
+#   uv pip install -r analyzer/requirements-cuda.txt
+#   uv pip install -r analyzer/requirements.txt
+#
+# Order matters. Several packages below require `torch` and `torchaudio`; with the CUDA
+# builds already present those requirements are satisfied and left alone, whereas
+# installing this file first would pull the PyPI builds instead.
+#
+# WHAT IS AND IS NOT LISTED
+#
+# Only packages the Analyzer actually imports appear here, established from the import
+# graph of analyzer/*.py rather than from a snapshot of one machine. Transitive
+# dependencies are deliberately NOT pinned: einops, julius, soxr, numba, scipy,
+# scikit-learn, resampy, pooch, cffi and the rest are resolved by the resolver, because
+# pinning them here would freeze decisions that belong to the packages that need them.
+# There is no lock file yet; this manifest reproduces the verified direct set, not a
+# byte-identical environment.
+#
+# Versions are pinned exactly because this is the set that was verified end to end on a
+# real track, and two of them carry real constraints:
+#
+#   librosa 0.11.0  - librosa 1.0.0 requires Python >= 3.12 while the Analyzer runtime is
+#                     Python 3.11. Moving to librosa 1.x is a decision to move the
+#                     Analyzer's Python version, not a routine bump.
+#   demucs-infer    - the maintained inference-only fork, NOT the original `demucs`,
+#                     whose upstream is archived and whose metadata assumes older torch.
+#
+# torch and torchaudio are in analyzer/requirements-cuda.txt, not here.
+
+beat-this==1.1.0
+demucs-infer==4.2.2
+librosa==0.11.0
+numpy==2.4.6
+soundfile==0.14.0
+torchcrepe==0.0.24
