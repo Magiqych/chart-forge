@@ -1,7 +1,5 @@
 # Editor
 
-> **Not implemented.** This directory currently holds only its responsibility statement.
-
 Where a human authors a chart, with the analysis displayed as a guide layer.
 
 - **Input:** a Project document ([`../schemas/project.schema.json`](../schemas/project.schema.json)),
@@ -53,8 +51,99 @@ section of the Project document, purely so a session can be restored.
   the analysis.
 - Times are seconds from the start of the audio, in fields named `...Sec`.
 
+## Stack
+
+| | |
+| --- | --- |
+| Desktop shell | Tauri 2 |
+| UI | React 19 + TypeScript |
+| Build | Vite |
+| Timeline | native Canvas 2D |
+| Audio | HTML media element streaming + Web Audio for the display envelope |
+| Tests | Vitest |
+| Package manager | npm |
+
+Everything lives under `editor/`; no other component gains a JavaScript dependency, and
+the JSON documents remain the only interface between components.
+
+Deliberately **not** used yet: PixiJS, Konva, wavesurfer.js, Redux, Zustand, Tailwind,
+any component framework, any database or server. Each would be added only when a measured
+need appears.
+
+## Running it
+
+```powershell
+cd editor
+npm install
+npm run test        # Vitest, no browser needed
+npm run typecheck
+npm run build       # type check + production bundle
+npm run tauri dev   # desktop shell (needs the Rust toolchain)
+```
+
+The frontend builds and its tests run with Node alone. The desktop shell additionally
+needs a Rust toolchain, the MSVC build tools and the WebView2 runtime - Tauri's standard
+Windows prerequisites.
+
+## Architecture
+
+**React owns state, Canvas owns pixels.** React holds the viewport, playhead, layer
+visibility and the loaded projection, and orchestrates interaction. The timeline -
+waveform, beat grid, event overlay, playhead - is drawn by `src/render/timelineRenderer.ts`,
+a plain TypeScript module that knows nothing about React.
+
+That split is not stylistic. A real Analysis document carries **2258 events**; rendering
+those as DOM nodes would put thousands of elements through the reconciler on every pan.
+They are never React elements.
+
+```text
+src/
+  core/       pure logic - projection, viewport maths, lane layout   (unit tested)
+  render/     Canvas 2D renderer and theme
+  audio/      playback element + display envelope
+  io/         the one route to documents, via the Rust loader
+  ui/         React components: Toolbar, LayerPanel, Timeline host
+src-tauri/    Rust: OS dialog, document loader, narrow asset scope
+```
+
+### The filesystem boundary
+
+The frontend gets **no general filesystem access**. It calls one Rust command with a
+project path the user picked from the OS dialog; the loader resolves that Project's
+`documentRef`s relative to the project file, canonicalises them, verifies the recorded
+SHA-256, and returns only those documents. A `..` in a reference is legitimate - a
+project commonly sits beside the runs directory it points into - so paths are resolved,
+not rejected for their shape. No URL or network references are supported.
+
+Audio is streamed through Tauri's asset protocol, whose scope starts empty and is widened
+only to the single file the loader resolved. A 40 MB track is never marshalled through
+IPC as base64.
+
+### Analysis projection
+
+The Analysis document is **read-only guidance**, never copied into an editor model. On
+load it is reduced to a projection of the stable contract fields;
+`metadata.experimental` is dropped, which on a real 5.01 MB document leaves **0.85 MB** -
+an 83% reduction - and costs 5.4 ms.
+
+Event shape is chosen by `endKind`, never by whether `endSec` happens to be present:
+`instantaneous` draws a tick, `bounded` draws a span positioned by `pitch.midi` within
+its lane, and a future `unknown` draws a mark with a fading tail so it can never be
+mistaken for a measured end.
+
+There is **no confidence control**, not even a disabled one: Analysis 0.2 emits no
+`confidence`, and offering the affordance would promise what the data cannot deliver.
+
 ## Implementation status
 
-No UI framework, desktop shell or dependency has been chosen. TypeScript on the web
-platform is a plausible fit, but no other part of the repository may assume it. Nothing
-outside this directory may import from it; the JSON documents are the only interface.
+Foundation and Analysis visualisation MVP: project loading, the read-only projection, the
+timeline with beat grid and four event lanes, per-layer visibility, zoom/pan, and audio
+playback with a synchronised playhead.
+
+Not implemented, and deliberately so: note authoring, event snapping, automatic
+event-to-note conversion, spectrogram, pitch contours, stem soloing, density
+aggregation, undo/redo, and Player integration.
+
+**No automatic conversion of Analysis events into Chart notes exists or is planned as a
+shortcut.** The overlay is guidance; the author decides. That is the project's thesis,
+not a limitation to be lifted later.

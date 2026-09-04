@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimum the Editor needs: an OS open dialog, the two loader commands, and the asset protocol whose scope starts empty and is widened only to the one audio file a Project resolves to.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-set-title"
+  ]
+}

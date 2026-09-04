@@ -1,0 +1,14 @@
+# Editor build and dependency artefacts.
+# The repository's root .gitignore already covers node_modules/ and dist/; these entries
+# make the editor directory self-describing and add the Rust build output.
+
+node_modules/
+dist/
+.vite/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Local scratch
+*.local
