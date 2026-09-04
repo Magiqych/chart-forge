@@ -101,11 +101,94 @@ ordering are stable; event counts and boundaries move by a few percent between r
 ## Usage
 
 ```powershell
+# separate the audio, then analyse it (default)
 python -m analyzer <audio-file> --output-dir <directory>
+
+# reuse stems that already exist, skipping separation
+python -m analyzer <audio-file> --output-dir <directory> --stems-dir <existing-stems>
 ```
 
-Writes `<output-dir>/analysis.json` and `<output-dir>/stems/{drums,bass,other,vocals}.wav`.
-It refuses to overwrite either, so re-running means choosing a fresh output directory.
+Without `--stems-dir` the Analyzer runs htdemucs and writes
+`<output-dir>/stems/{drums,bass,other,vocals}.wav` alongside `<output-dir>/analysis.json`.
+It refuses to overwrite anything it would write, so re-running means choosing a fresh
+output directory.
+
+### Reusing existing stems
+
+`--stems-dir` points at a directory that already contains all four stems:
+
+```text
+<stems-dir>/
+├─ drums.wav
+├─ bass.wav
+├─ other.wav
+└─ vocals.wav
+```
+
+The directory is **read only**. Nothing is written into it, and the stems are not copied
+into the output directory - the run writes only `analysis.json`, and `stems[].path`
+refers to where the stems actually live.
+
+That has a consequence worth being explicit about. `stems[].sha256` is the stable
+identity of a stem's content: it does not change when files move, and it is what tells
+you whether two documents saw the same audio. `stems[].path` is only a **locator
+relative to the document**, so moving `analysis.json` and the stem set independently can
+leave it pointing nowhere. **A pinned run's `analysis.json` is therefore not a portable
+bundle on its own**, and nothing here promises that it is. If a self-contained artifact
+is wanted later - a document with its stems packaged alongside it - that belongs in a
+separate bundle or export step, not in the behaviour of an ordinary Analyzer run.
+
+Validation before anything runs: the directory exists, all four files are present and
+readable as audio, they agree on sample rate, channel count and length, and their
+duration is within 0.5 s of the source audio. If any check fails the run **stops** with a
+non-zero exit; it never quietly separates instead, because a run that claimed to use
+pinned stems and did not would make its own provenance false.
+
+The audio argument stays **required**. Pinned stems are not a substitute for source
+identity: the audio still supplies `audio.sha256`, the duration and sample-rate metadata,
+and the full mix that the beat branch reads. Beat tracking never reads a stem.
+
+### What stem pinning does and does not fix
+
+Two different identities are recorded, and they answer different questions:
+
+| | |
+| --- | --- |
+| `audio.sha256` | which recording was analysed |
+| `stems[].sha256` | which separated audio the detectors actually saw |
+
+They are independent. The same audio can produce different stems, because htdemucs is not
+bit-reproducible on the same GPU with the same input - separation is where run-to-run
+variation enters. Pinning removes that variable, and the effect is measurable: two runs
+over the same pinned stems produced **identical event ids, timestamps, durations,
+`endKind`, `detectorId`, beat grid, stem hashes and onset strengths**, and an identical
+event count of 2258.
+
+It does **not** make a run byte-identical. torchcrepe's f0 estimation is itself
+nondeterministic on the GPU, so `pitch.hz`, `pitch.midi` and the pitch summaries still
+move between runs - measured at a median of 3.0 cents, p95 11.3, maximum 23.7, with none
+exceeding 50 cents. Notably torchcrepe's *periodicity* output is bit-identical, which is
+why segmentation - and therefore every event boundary - is stable.
+
+So the accurate claim is narrow: **given the same source audio, the same Analyzer and
+dependencies, and byte-identical pinned stems, the event set and its timings are
+reproducible; pitch values are reproducible only to within a few cents.**
+
+### Where the stems came from
+
+`stems[].method` says it in prose and `generator.parameters.separation` says it in a form
+a consumer can branch on:
+
+```json
+{ "mode": "generated", "separationRun": true, "package": "demucs-infer",
+  "version": "4.2.2", "model": "htdemucs", "device": "cuda:0" }
+
+{ "mode": "supplied", "separationRun": false, "stemsDir": "..." }
+```
+
+For supplied stems the Analyzer records that it did not produce them and cannot verify
+what did. Validation confirms the stems are usable and plausibly belong to the audio; it
+cannot prove they were separated from it.
 
 ## Current pipeline
 

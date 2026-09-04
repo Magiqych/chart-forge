@@ -10,6 +10,7 @@ rather than a slower path.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,6 +26,9 @@ PITCH_BRANCHES = (("bass", "bass"), ("vocals", "vocal"))
 
 TARGET_FILES = ("analysis.json", "stems/drums.wav", "stems/bass.wav",
                 "stems/other.wav", "stems/vocals.wav")
+
+#: With pinned stems the run writes only the document; the stems stay where they are.
+TARGET_FILES_SUPPLIED = ("analysis.json",)
 
 
 class StageTimer:
@@ -65,9 +69,14 @@ class _StageContext:
         return False
 
 
-def check_output_targets(output_dir: Path):
-    """Refuse to start if anything we would write already exists."""
-    existing = [name for name in TARGET_FILES if (output_dir / name).exists()]
+def check_output_targets(output_dir: Path, supplied_stems=False):
+    """Refuse to start if anything we would write already exists.
+
+    With pinned stems only the document is written, so only the document is checked -
+    the guard covers what this run would actually touch, nothing wider.
+    """
+    targets = TARGET_FILES_SUPPLIED if supplied_stems else TARGET_FILES
+    existing = [name for name in targets if (output_dir / name).exists()]
     if existing:
         raise FileExistsError(
             "output directory already contains files this run would write: {0}\n"
@@ -75,6 +84,19 @@ def check_output_targets(output_dir: Path):
                 ", ".join(sorted(existing))
             )
         )
+
+
+def stem_reference_path(stem_path: Path, output_dir: Path) -> str:
+    """How a stem is addressed from analysis.json.
+
+    The schema wants a path relative to the document, which works whenever the stems sit
+    on the same drive. Pinned stems on another drive have no relative form, so an
+    absolute path is used rather than an invented one.
+    """
+    try:
+        return Path(os.path.relpath(stem_path, output_dir)).as_posix()
+    except ValueError:
+        return str(stem_path)
 
 
 def require_cuda():
@@ -88,18 +110,22 @@ def require_cuda():
     return torch.cuda.get_device_name(0)
 
 
-def run(audio_path, output_dir) -> int:
+def run(audio_path, output_dir, supplied_stems_dir=None) -> int:
     output_dir = Path(output_dir).expanduser().resolve()
     stems_dir = output_dir / "stems"
     analysis_path = output_dir / "analysis.json"
+    use_supplied = supplied_stems_dir is not None
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    check_output_targets(output_dir)
+    check_output_targets(output_dir, supplied_stems=use_supplied)
 
     device_name = require_cuda()
     print("chart-forge-analyzer {0}   device: {1}".format(__version__, device_name))
     print("input:  {0}".format(audio_path))
     print("output: {0}".format(output_dir))
+    if use_supplied:
+        print("stems:  {0}   (pinned, read only - separation skipped)".format(
+            supplied_stems_dir))
     print()
 
     # -- 1. ingest ---------------------------------------------------------------
@@ -115,20 +141,27 @@ def run(audio_path, output_dir) -> int:
 
     stems_written = False
     try:
-        # -- 2. separation -------------------------------------------------------
-        with timer.stage("separate", "separate (htdemucs)"):
-            sep = separation.separate(info.path, stems_dir, device="cuda")
-        stems_written = True
+        # -- 2. stems: separate, or adopt the pinned ones ------------------------
+        if use_supplied:
+            with timer.stage("stems", "stems (pinned - skipping htdemucs)"):
+                sep = separation.load_supplied(supplied_stems_dir, info.duration_sec)
+        else:
+            with timer.stage("separate", "separate (htdemucs)"):
+                sep = separation.separate(info.path, stems_dir, device="cuda")
+            stems_written = True
 
-        stems = []
-        for name in separation.STEM_NAMES:
-            stems.append({
+        # The hash is computed from the bytes actually read this run, whichever mode
+        # produced them: it is the identity of what the detectors saw.
+        stems = [
+            {
                 "id": "stem-{0}".format(name),
                 "kind": name,
-                "path": "stems/{0}.wav".format(name),
+                "path": stem_reference_path(sep.stem_paths[name], output_dir),
                 "sha256": audio.sha256_file(sep.stem_paths[name]),
-                "method": separation.METHOD,
-            })
+                "method": separation.SUPPLIED_METHOD if use_supplied else separation.METHOD,
+            }
+            for name in separation.STEM_NAMES
+        ]
 
         # -- 3. beat / downbeat --------------------------------------------------
         with timer.stage("beat", "beat/downbeat (Beat This!)"):
@@ -200,6 +233,7 @@ def run(audio_path, output_dir) -> int:
                 event_counts=counts,
                 stage_seconds=timer.seconds,
             ),
+            separation_provenance=document.build_separation_provenance(sep, separation),
         )
         document.write_atomic(doc, analysis_path)
     except Exception:
@@ -226,16 +260,19 @@ def _report(doc, info, timer, sep, beat_result, pitch_results, analysis_path):
     print("total RTF          {0:9.5f}".format(total / info.duration_sec))
     print()
     print("{0:<20}{1:>10}  {2:>9}".format("stage", "seconds", "RTF"))
-    for name in ("ingest", "separate", "beat", "bass pitch", "vocals pitch",
+    for name in ("ingest", "separate", "stems", "beat", "bass pitch", "vocals pitch",
                  "drums onset", "other onset"):
         if name in timer.seconds:
             seconds = timer.seconds[name]
             print("{0:<20}{1:>10.3f}  {2:>9.5f}".format(
                 name, seconds, seconds / info.duration_sec))
+    if sep.mode == "supplied":
+        print("  (separation skipped: stems pinned from {0})".format(sep.stems_dir))
     print()
     print("GPU peak memory (bytes)")
-    print("  separation   allocated {0:>13,}  reserved {1:>13,}".format(
-        sep.max_cuda_allocated, sep.max_cuda_reserved))
+    if sep.mode == "generated":
+        print("  separation   allocated {0:>13,}  reserved {1:>13,}".format(
+            sep.max_cuda_allocated, sep.max_cuda_reserved))
     print("  beat         allocated {0:>13,}  reserved {1:>13,}".format(
         beat_result.max_cuda_allocated, beat_result.max_cuda_reserved))
     for stem, result in pitch_results.items():
@@ -256,23 +293,34 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m analyzer",
         description="Analyse an audio file into a Chart Forge Analysis document.",
-        epilog="Writes <output-dir>/analysis.json and <output-dir>/stems/*.wav. "
-               "Refuses to overwrite either, so use a fresh directory to re-run. "
-               "Requires CUDA.",
+        epilog="Writes <output-dir>/analysis.json, plus <output-dir>/stems/*.wav unless "
+               "--stems-dir supplies them. Refuses to overwrite anything it would write, "
+               "so use a fresh --output-dir to re-run. Requires CUDA.",
     )
     parser.add_argument("audio", help="path to the audio file to analyse (read only)")
     parser.add_argument("--output-dir", required=True,
                         help="directory to write analysis.json and stems/ into")
+    parser.add_argument("--stems-dir", default=None, metavar="DIR",
+                        help="reuse existing htdemucs stems from DIR instead of running "
+                             "separation. DIR must contain drums.wav, bass.wav, "
+                             "other.wav and vocals.wav, and is treated as read only. "
+                             "The audio argument is still required and still feeds the "
+                             "beat branch.")
     parser.add_argument("--version", action="version",
                         version="chart-forge-analyzer {0} (Analysis document {1})".format(
                             __version__, document.ANALYSIS_VERSION))
     args = parser.parse_args(argv)
 
     try:
-        return run(args.audio, args.output_dir)
+        return run(args.audio, args.output_dir, args.stems_dir)
     except FileExistsError as error:
         print("error: {0}".format(error), file=sys.stderr)
         return 2
+    except separation.StemValidationError as error:
+        print("error: supplied stems cannot be used: {0}".format(error), file=sys.stderr)
+        print("Not falling back to separation; fix --stems-dir or omit it.",
+              file=sys.stderr)
+        return 3
     except (FileNotFoundError, RuntimeError, ValueError) as error:
         print("error: {0}".format(error), file=sys.stderr)
         raise

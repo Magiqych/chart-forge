@@ -964,6 +964,57 @@ The practical consequence: an Analysis document's **structure and beat grid are
 reproducible, its event set is not**, and a document hash is not a stable identity.
 Anything that needs exact reproducibility must pin the stems, not just the input audio.
 
+### Stem pinning
+
+That last sentence is now actionable. `--stems-dir` runs the pipeline from stems that
+already exist, skipping htdemucs entirely:
+
+```text
+python -m analyzer <audio> --output-dir <dir> --stems-dir <existing-stems>
+```
+
+The audio argument stays required - it supplies `audio.sha256`, the ingest metadata and
+the full mix the beat branch reads, so the architectural rule that beat tracking never
+touches a stem is unaffected. The stem directory is read only, and validation failures
+stop the run rather than falling back to separation.
+
+Measured over two runs on the same pinned stems, the reproducibility boundary sits
+exactly where the earlier investigation predicted:
+
+```text
+identical between runs
+  event ids, startSec, endSec, durationSec, endKind, detectorId, source
+  the complete beat grid (461 beats, times and downbeat flags)
+  stem sha256, path and method
+  torchcrepe periodicity - all 20,105 values, which is why segmentation is stable
+  librosa onset strength - all 34,633 values
+  Beat This! logits - all 10,053 values
+  every event's rawScore
+
+still varying
+  torchcrepe f0: pitch.hz, pitch.midi, the pitch summaries and the raw pitchHz curves
+  median 3.0 cents, p95 11.3, max 23.7, none above 50
+  generator.createdAt and the recorded stage timings
+```
+
+The documents are therefore **not byte-identical**, and the difference is confined to
+pitch values and timestamps. The narrow claim that holds is: given the same audio, the
+same Analyzer and dependencies, and byte-identical pinned stems, the **event set and its
+timings** are reproducible; pitch is reproducible only to within a few cents.
+
+A pinned run also reproduced the earlier proof-of-concept reference exactly - the same
+2258 events with the same ids and timestamps, 1093 / 225 / 463 / 477 across the branches
+- which is the same fidelity result seen when the new modules were first checked against
+the PoC stems, now reached through the shipped CLI instead of a scratch script.
+
+Two identities are recorded and they answer different questions: `audio.sha256` says
+which recording was analysed, `stems[].sha256` says which separated audio the detectors
+saw. `generator.parameters.separation` records whether this run generated the stems or
+adopted them. **No contract change was needed** for any of this: `stems[].sha256` already
+existed and its description already anticipated externally generated stems,
+`stems[].method` is the schema's designated provenance field, and `generator.parameters`
+is declared free-form.
+
 The next milestone is running one real song through the whole chain once:
 
 ```text

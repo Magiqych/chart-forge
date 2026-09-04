@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from analyzer import audio, beat, cli, document, onset, pitch
+from analyzer import audio, beat, cli, document, onset, pitch, separation
 
 
 def _beat_stub():
@@ -63,9 +63,14 @@ def _build():
               "method": "demucs-infer 4.2.2 / htdemucs"}
              for n in ("drums", "bass", "other", "vocals")]
     beat_result = _beat_stub()
+    separation_stub = separation.SeparationResult(
+        stem_paths={}, sample_rate=44100, seconds=1.0, max_cuda_allocated=1,
+        max_cuda_reserved=2, mode="generated", stems_dir=Path("stems"))
     return document.build_document(
         analyzer_version="0.1.0", audio_info=info, stems=stems,
         detectors=document.build_detectors(pitch, onset, beat),
+        separation_provenance=document.build_separation_provenance(
+            separation_stub, separation),
         beat_times=beat_result.beat_times,
         downbeat_flags=beat.downbeat_flags(beat_result.beat_times,
                                            beat_result.downbeat_times),

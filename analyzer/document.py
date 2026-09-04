@@ -211,8 +211,38 @@ def build_detectors(pitch_module, onset_module, beat_module) -> List[dict]:
     ]
 
 
+def build_separation_provenance(separation_result, separation_module) -> dict:
+    """Machine-readable record of where this run's stems came from.
+
+    `stems[].method` says the same thing in prose, and `stems[].sha256` identifies the
+    exact bytes; this is the structured form a consumer can branch on. It lives in
+    `generator.parameters`, which the schema declares free-form, so recording it needs no
+    contract change - and `stems[]` itself forbids additional properties, so this is the
+    correct home rather than a convenient one.
+    """
+    if separation_result.mode == "supplied":
+        return {
+            "mode": "supplied",
+            "stemsDir": str(separation_result.stems_dir),
+            "separationRun": False,
+            "note": "stems were pinned and reused; htdemucs did not run, and the "
+                    "Analyzer cannot verify which tool produced them",
+        }
+    return {
+        "mode": "generated",
+        "separationRun": True,
+        "package": separation_module.PACKAGE,
+        "version": separation_module.VERSION,
+        "model": separation_module.MODEL,
+        "device": "cuda:0",
+        "note": "htdemucs is not bit-reproducible on the same GPU with the same input; "
+                "pin the stems to remove that variable",
+    }
+
+
 def build_document(*, analyzer_version, audio_info, stems, detectors, beat_times,
-                   downbeat_flags, tempo_bpm, events, experimental) -> dict:
+                   downbeat_flags, tempo_bpm, events, experimental,
+                   separation_provenance) -> dict:
     """Assemble a complete Analysis 0.2 document."""
     return {
         "version": ANALYSIS_VERSION,
@@ -221,6 +251,7 @@ def build_document(*, analyzer_version, audio_info, stems, detectors, beat_times
             "version": analyzer_version,
             "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "parameters": {
+                "separation": separation_provenance,
                 "confidencePolicy": {
                     "emitted": False,
                     "reason": "Beat This! logits, torchcrepe periodicity and librosa "
