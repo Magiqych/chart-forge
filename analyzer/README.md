@@ -54,6 +54,16 @@ leaving the creative decisions with the author.
 
 ## Implementation status
 
-No language, framework or dependency has been chosen. Python is a plausible fit, but no
-other part of the repository may assume it. Nothing outside this directory may import
-from it; the Analysis document is the only interface.
+The Analyzer stack is now being validated as a Python 3.11 / PyTorch CUDA pipeline.
+Source separation with `demucs-infer` / `htdemucs` and beat/downbeat tracking with
+Beat This! have been verified on Windows with an NVIDIA GPU.
+
+Pitch tracking, onset extraction and the first real Analysis document are not implemented
+yet.
+
+See [`../docs/analyzer-stack.md`](../docs/analyzer-stack.md) for the selected stack,
+verified environment, measurements, open design questions and next steps.
+
+This choice of stack stays inside this directory. No other component may assume it, and
+nothing outside this directory may import from it; the Analysis document is the only
+interface.

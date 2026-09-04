@@ -85,6 +85,7 @@ chart-forge/
 ├─ .gitignore
 │
 ├─ docs/
+│  ├─ analyzer-stack.md          Analyzer technology selection and verified measurements
 │  ├─ architecture.md            components, boundaries and why they are separate
 │  ├─ data-flow.md               how documents move through the pipeline
 │  └─ terminology.md             shared vocabulary (event vs. note, etc.)
