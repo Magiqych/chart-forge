@@ -49,10 +49,14 @@ CODES = {
     "contract/unpaired-example": "an example has no schema, or a schema has no example",
     "analysis/duplicate-event-id": "two analysis events share an id",
     "analysis/duplicate-stem-id": "two stems share an id",
+    "analysis/duplicate-detector-id": "two detectors share an id",
     "analysis/unknown-stem-ref": "an event points at a stem that is not declared",
+    "analysis/unknown-detector-ref": "a beat or event points at a detector that is not declared",
     "analysis/end-before-start": "an event ends before it starts",
     "analysis/duration-mismatch": "durationSec disagrees with endSec - startSec",
+    "analysis/end-kind-mismatch": "endSec or durationSec disagrees with the event's endKind",
     "analysis/beats-not-ascending": "beats are not in ascending time order",
+    "analysis/events-not-ascending": "events are not ordered by (startSec, id)",
     "chart/duplicate-note-id": "two notes share an id",
     "chart/lane-out-of-range": "a note sits outside the playfield",
     "chart/end-lane-out-of-range": "a note ends outside the playfield",
@@ -324,6 +328,26 @@ def check_analysis(document, label, problems):
             )
         stem_ids.add(stem["id"])
 
+    detector_ids = set()
+    for detector in document.get("detectors", []):
+        if detector["id"] in detector_ids:
+            problems.add(
+                "analysis/duplicate-detector-id",
+                "{0}: detector id {1!r} appears more than once".format(
+                    label, detector["id"]
+                ),
+            )
+        detector_ids.add(detector["id"])
+
+    for index, beat in enumerate(document.get("beats", [])):
+        ref = beat.get("detectorId")
+        if ref is not None and ref not in detector_ids:
+            problems.add(
+                "analysis/unknown-detector-ref",
+                "{0}: beat {1} at {2}s references detector {3!r}, which is not "
+                "declared".format(label, index, beat.get("timeSec"), ref),
+            )
+
     event_ids = set()
     for event in document.get("events", []):
         event_id = event["id"]
@@ -340,6 +364,15 @@ def check_analysis(document, label, problems):
                 "analysis/unknown-stem-ref",
                 "{0}: event {1!r} references stem {2!r}, which is not declared".format(
                     label, event_id, stem_ref
+                ),
+            )
+
+        detector_ref = event.get("detectorId")
+        if detector_ref is not None and detector_ref not in detector_ids:
+            problems.add(
+                "analysis/unknown-detector-ref",
+                "{0}: event {1!r} references detector {2!r}, which is not declared".format(
+                    label, event_id, detector_ref
                 ),
             )
 
@@ -362,11 +395,38 @@ def check_analysis(document, label, problems):
                     ),
                 )
 
+        # endKind is what makes a missing endSec unambiguous, so the two must agree.
+        end_kind = event.get("endKind")
+        if end_kind == "bounded" and end is None:
+            problems.add(
+                "analysis/end-kind-mismatch",
+                "{0}: event {1!r} has endKind 'bounded' but no endSec".format(
+                    label, event_id
+                ),
+            )
+        if end_kind in ("instantaneous", "unknown"):
+            for field, value in (("endSec", end), ("durationSec", duration)):
+                if value is not None:
+                    problems.add(
+                        "analysis/end-kind-mismatch",
+                        "{0}: event {1!r} has endKind {2!r} but also {3} {4}".format(
+                            label, event_id, end_kind, field, value
+                        ),
+                    )
+
     beats = [beat["timeSec"] for beat in document.get("beats", [])]
     if not is_ascending(beats):
         problems.add(
             "analysis/beats-not-ascending",
             "{0}: beats[].timeSec is not in ascending order".format(label),
+        )
+
+    # Events carry a total order: startSec, then id for events sharing a timestamp.
+    order = [(event["startSec"], event["id"]) for event in document.get("events", [])]
+    if not is_ascending(order):
+        problems.add(
+            "analysis/events-not-ascending",
+            "{0}: events[] is not ordered by (startSec, id)".format(label),
         )
 
 
@@ -771,10 +831,86 @@ def report_coverage(covered, report):
         report.note("         - {0} ({1})".format(code, CODES[code]))
 
 
+def run_external_analysis(path, report):
+    """Validate one Analysis document that lives outside the repository.
+
+    Only the Analysis contract is exercised: the schema, then the same semantic checks
+    the repository's own examples go through. No chart, no project, no fixtures, and
+    nothing in the repository is copied or modified.
+    """
+    target = Path(path).expanduser().resolve()
+    if not report.quiet:
+        print("Chart Forge Analysis validation")
+        print("repository: " + str(REPO_ROOT))
+        print("document:   " + str(target))
+
+    report.heading("schema")
+    problems = Problems()
+    schema_path = REPO_ROOT / "schemas" / "analysis.schema.json"
+    schema = load_json(schema_path, problems)
+    if schema is None:
+        for code, message in problems.items:
+            report.fail("{0}: {1}".format(code, message))
+        return 1
+    unsupported = unsupported_keywords(schema)
+    if unsupported:
+        for where, keyword in unsupported:
+            report.fail(
+                "schema/unsupported-keyword: {0}: {1} uses {2!r}, which the contract "
+                "test does not enforce".format(rel(schema_path), where, keyword)
+            )
+        return 1
+    report.ok("{0} loaded".format(rel(schema_path)))
+
+    report.heading("document")
+    document = load_json(target, problems, label=str(target))
+    for code, message in problems.items:
+        report.fail("{0}: {1}".format(code, message))
+    if document is None:
+        print()
+        print("FAILED: {0} problem(s)".format(report.failures))
+        return 1
+
+    schema_problems = Problems()
+    validate_against_schema(document, schema, str(target), schema_problems)
+    for code, message in schema_problems.items:
+        report.fail("{0}: {1}".format(code, message))
+    if not schema_problems:
+        report.ok("conforms to analysis.schema.json")
+
+    if schema_problems:
+        report.note("skipping semantic checks: the document does not match its schema")
+    else:
+        semantic = Problems()
+        check_analysis(document, str(target), semantic)
+        for code, message in semantic.items:
+            report.fail("{0}: {1}".format(code, message))
+        if not semantic:
+            report.ok("satisfies every Analysis semantic check")
+
+    print()
+    if report.failures:
+        print("FAILED: {0} problem(s)".format(report.failures))
+        return 1
+    print("PASSED")
+    return 0
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog="Two modes: with no arguments the full repository contract suite runs "
+               "(schemas, examples, negative fixtures, coverage). With --analysis, only "
+               "the given Analysis JSON is validated against schemas/analysis.schema.json "
+               "and the Analysis semantic checks.",
+    )
     parser.add_argument(
         "--repo-root", default=None, help="repository root (default: the parent of tests/)"
+    )
+    parser.add_argument(
+        "--analysis", default=None, metavar="PATH",
+        help="validate a single Analysis JSON document at PATH (absolute or relative) "
+             "instead of running the repository suite; exits 0 when it is valid",
     )
     parser.add_argument("--quiet", action="store_true", help="print failures only")
     args = parser.parse_args(argv)
@@ -786,6 +922,10 @@ def main(argv=None):
         CASES_FILE = FIXTURES / "cases.json"
 
     report = Report(quiet=args.quiet)
+
+    if args.analysis:
+        return run_external_analysis(args.analysis, report)
+
     if not args.quiet:
         print("Chart Forge contract tests")
         print("repository: " + str(REPO_ROOT))

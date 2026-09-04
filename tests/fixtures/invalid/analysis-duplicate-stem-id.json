@@ -1,1 +1,1 @@
-{"version":"0.1.0","audio":{"path":"a.wav"},"stems":[{"id":"s1","kind":"drums"},{"id":"s1","kind":"vocals"}],"events":[]}
+{"version":"0.2.0","audio":{"path":"a.wav"},"detectors":[{"id":"d1","name":"t"}],"stems":[{"id":"s1","kind":"drums"},{"id":"s1","kind":"vocals"}],"events":[]}

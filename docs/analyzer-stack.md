@@ -793,7 +793,9 @@ human placing a hold note would want to tell them apart. Recorded below as gap *
 
 ## Current schema gaps
 
-Identified during technology selection, to be re-evaluated against real data:
+Identified during technology selection, then re-evaluated against the first real Analysis
+document. The list below is the original one, kept as written; the section after it
+records which gaps the 0.2 contract candidate closes and which stay open.
 
 - **G1** - per-event provenance is weak; `generator` is global while every event comes
   from a different detector.
@@ -808,9 +810,65 @@ Identified during technology selection, to be re-evaluated against real data:
 - **G8** - `events[]` ordering policy is not stated.
 - **G9** - no relative or normalized loudness, only absolute dB.
 
-**No schema change is being made now.** These are recorded, not acted on. They will be
-re-evaluated after an Analysis document has been generated from a real song, because
-that is what will show which gaps are real and which are theoretical.
+These were recorded rather than acted on, pending evidence from a real song.
+
+## Analysis contract 0.2 candidate
+
+A real Analysis document has now been generated from a full track - 2258 events across
+four branches, 461 beats, 940 events with a measured end and 1318 without, and 53 events
+sharing a timestamp with another event. That evidence closed four of the nine gaps well
+enough to put them in the contract; the rest are deliberately still open, because the
+document did not tell us what the right answer is.
+
+**Addressed by the 0.2 candidate**
+
+- **G1 - per-event provenance.** The document now carries a top-level `detectors[]`
+  registry, and every event and beat references one entry through a required
+  `detectorId`. A registry rather than a per-event object was chosen because the real
+  document's `events[]` had already reached ~1.99 MB at roughly 880 bytes per event, and
+  repeating a detector object on all 2258 events would have made that worse for no
+  information gain. `metadata` survives for analyzer-specific values such as raw scores,
+  but it is no longer where provenance lives.
+- **G3 - instantaneous versus unknown end.** Every event now carries a required
+  `endKind` of `instantaneous`, `unknown` or `bounded`. In the real document 1318 events
+  had no `endSec`, and nothing distinguished "a drum hit has no duration" from "the end
+  could not be determined". The value is `bounded` rather than `measured` deliberately:
+  these ends are detector-derived estimates, not physical measurements.
+- **G6 - stem integrity.** `stems[]` entries take an optional `sha256`, matching the
+  pattern already used by `audio`. It stays optional because an analysis may reference
+  stems produced elsewhere, whose hash is unavailable. In the real document the four stem
+  hashes had been exiled to experimental metadata - a block explicitly marked as
+  undependable - which meant nothing could actually verify a stem.
+- **G8 - event ordering.** `events[]` is now contractually ordered by `startSec`
+  ascending and then `id` lexicographically, and the validator enforces the full key
+  rather than just the timestamp. The secondary key is not decoration: 53 events in the
+  real document shared a timestamp, so without it the order was not reproducible. The
+  schema states explicitly that the tie order carries no musical priority.
+
+Alongside these, the validator gained a supported way to check a real document:
+`python tests/validate_contracts.py --analysis <path>`. Generating the first real
+document had exposed that no such entry point existed.
+
+**Still open, deliberately**
+
+- **G2 - confidence semantics.** Still unresolved, and the real document made it sharper
+  rather than easier: the same detector produced different distributions per branch. The
+  document omits `confidence` entirely rather than emitting a number that looks
+  comparable and is not.
+- **G4 - pitch curves.** Confirmed as a real loss - the median pitch run is 0.16-0.18 s
+  and is compressed to a single median frequency - but the right representation for a
+  contour is not yet designed.
+- **G5 - time signature.** Meter was constant in the test track, so nothing forced the
+  issue. The real document omits `barIndex` and `beatInBar` because the intro's meter
+  phase was unreliable, which leaves 461 beat times carrying no meter information at all.
+- **G7 - frame-level curves.** Inlining them worked but cost a 2.7x size multiplier
+  (5.63 MiB for a 3.4-minute track). Whether they belong inline, in a sidecar, or nowhere
+  in the contract is a design decision, not a missing field.
+- **G9 - normalized prominence.** Raw onset strength now lives only in experimental
+  metadata, so a consumer reading the stable contract has no prominence signal at all.
+  The honest fix is tied to G2 and should be designed with it.
+
+Nothing about the open gaps should be read as solved.
 
 ## Deferred / rejected
 

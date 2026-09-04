@@ -1,1 +1,1 @@
-{"version":"0.1.0","audio":{"path":"a.wav"},"events":[{"id":"e1","type":"note","startSec":1.0,"endSec":2.0,"durationSec":5.0}]}
+{"version":"0.2.0","audio":{"path":"a.wav"},"detectors":[{"id":"d1","name":"t"}],"events":[{"id":"e1","type":"note","detectorId":"d1","endKind":"bounded","startSec":1.0,"endSec":2.0,"durationSec":5.0}]}

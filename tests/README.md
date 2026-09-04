@@ -7,21 +7,44 @@ component ends up using.
 
 ## Running them
 
+There are two modes.
+
+**The full repository contract suite** - schemas, examples, negative fixtures and code
+coverage:
+
 ```text
 python tests/validate_contracts.py
 ```
 
+**A single external Analysis document**, for validating a real analysis produced outside
+the repository:
+
+```text
+python tests/validate_contracts.py --analysis path/to/analysis.json
+```
+
+In `--analysis` mode only the Analysis contract runs: the document is checked against
+`schemas/analysis.schema.json` and then against the same semantic checks the repository's
+own examples go through. It does not touch the chart or project contracts, does not need
+a Project document, does not run the negative fixtures, and copies nothing into the
+repository. Absolute and relative paths both work.
+
+This mode exists because generating the first real Analysis document showed there was no
+supported way to validate one - the only options were importing the validator's functions
+by hand or copying the file into a throwaway repository-shaped tree.
+
 Python 3 standard library only - there is nothing to install, and no dependency is added
 to the repository. This is deliberate: the contract must be checkable before any
-component has chosen a language.
+component has chosen a language. Both Python 3.11 and 3.14 are exercised.
 
-Exit status is 0 when everything passes and 1 otherwise, so the command can be used as a
+Exit status is 0 when everything passes and 1 otherwise, so either mode can be used as a
 pre-commit check or, later, in CI.
 
 Options:
 
 | Option | Effect |
 | --- | --- |
+| `--analysis PATH` | validate one external Analysis JSON instead of the repository suite |
 | `--quiet` | print failures only |
 | `--repo-root PATH` | check a different checkout |
 
@@ -71,11 +94,17 @@ grow this file.
 
 **Analysis**
 
-- event ids are unique, and so are stem ids;
+- event ids are unique, and so are stem ids and detector ids;
 - `source.stemId` names a stem the document declares;
+- `detectorId` on every event and beat names a detector the document declares;
+- `endKind` agrees with the presence of `endSec` and `durationSec` - `bounded` requires
+  an `endSec`, while `instantaneous` and `unknown` must have neither;
 - `endSec` is not before `startSec`;
 - when both are present, `durationSec` agrees with `endSec - startSec`;
-- `beats[].timeSec` is in ascending order.
+- `beats[].timeSec` is in ascending order;
+- `events[]` is ordered by `(startSec, id)` - the secondary key matters because events
+  from different branches routinely share a timestamp (53 did in the first real
+  document), and it carries no musical meaning.
 
 **Chart**
 

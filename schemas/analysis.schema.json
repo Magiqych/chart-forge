@@ -24,6 +24,11 @@
       }
     },
     "audio": { "$ref": "#/$defs/audioRef" },
+    "detectors": {
+      "description": "The detectors that produced the contents of this document, declared once here rather than repeated on every beat and event. Beats and events refer to an entry by its 'id'. This is the formal provenance mechanism: with several detectors contributing to one document, a consumer must be able to tell which one produced a given observation without relying on analyzer-specific 'metadata'.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/detector" }
+    },
     "tempo": {
       "description": "Tempo information. 'bpm' is the overall representative tempo; 'map' describes tempo over time when it is not constant.",
       "type": "object",
@@ -51,10 +56,14 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["timeSec"],
+        "required": ["timeSec", "detectorId"],
         "additionalProperties": false,
         "properties": {
           "timeSec": { "$ref": "#/$defs/timeSec" },
+          "detectorId": {
+            "description": "Identifier of the entry in the top-level 'detectors' array that produced this beat.",
+            "$ref": "#/$defs/id"
+          },
           "isDownbeat": { "type": "boolean" },
           "barIndex": { "type": "integer", "minimum": 0 },
           "beatInBar": {
@@ -84,6 +93,11 @@
             "description": "Path to the separated audio, relative to this document.",
             "type": "string"
           },
+          "sha256": {
+            "description": "Hash of the generated stem audio so consumers can detect stale or mismatched separation output. Optional: an analysis may reference externally generated stems whose hash is unavailable.",
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
           "method": {
             "description": "How the stem was produced, for provenance.",
             "type": "string"
@@ -108,7 +122,7 @@
       }
     },
     "events": {
-      "description": "The musical events found in the audio. This is the primary guide layer. An event is an observation about the audio; it is not a note and carries no lane or gameplay type.",
+      "description": "The musical events found in the audio. This is the primary guide layer. An event is an observation about the audio; it is not a note and carries no lane or gameplay type. Events are ordered by 'startSec' ascending and, where two events share a startSec, by 'id' lexicographically ascending. That secondary key exists only to make the order total and reproducible - consumers must not read any musical priority into the order of events sharing a timestamp.",
       "type": "array",
       "items": { "$ref": "#/$defs/analysisEvent" }
     },
@@ -156,12 +170,47 @@
         "channels": { "type": "integer", "minimum": 1 }
       }
     },
+    "detector": {
+      "description": "One tool that contributed observations to this document. Declared once in the top-level 'detectors' array and referenced by beats and events through 'detectorId'.",
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Identifier unique among the detectors in this document.",
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "description": "Name of the tool, e.g. 'librosa.onset', 'torchcrepe', 'beat-this'.",
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "description": "Version of the tool, so an analysis can be traced to the exact build that produced it.",
+          "type": "string"
+        },
+        "parameters": {
+          "description": "Configuration this detector ran with. Free-form: the useful keys differ per tool, and consumers must not depend on any particular one.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
     "analysisEvent": {
       "type": "object",
-      "required": ["id", "type", "startSec"],
+      "required": ["id", "type", "startSec", "detectorId", "endKind"],
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/id" },
+        "detectorId": {
+          "description": "Identifier of the entry in the top-level 'detectors' array that produced this event.",
+          "$ref": "#/$defs/id"
+        },
+        "endKind": {
+          "description": "How the end of this event is to be understood, so that a missing 'endSec' is never ambiguous. 'instantaneous': the event is point-like and has no meaningful duration, so 'endSec' and 'durationSec' must be absent. 'unknown': the event may well have a duration but the Analyzer could not determine it, so 'endSec' and 'durationSec' must also be absent - this is a different statement from 'instantaneous'. 'bounded': the Analyzer determined a finite end, so 'endSec' must be present. The word is 'bounded' rather than 'measured' because these ends are detector-derived estimates, not physical measurements.",
+          "type": "string",
+          "enum": ["instantaneous", "unknown", "bounded"]
+        },
         "type": {
           "description": "What kind of observation this is. Open vocabulary: consumers must ignore, rather than reject, unknown types. 'onset' = a sound starts; 'note' = a pitched sound with a start and usually an end; 'percussion' = an unpitched hit; 'sustain' = a held sound; 'silence' = a gap.",
           "type": "string",

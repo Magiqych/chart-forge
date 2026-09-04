@@ -47,6 +47,41 @@
       "documents": { "analysis": "tests/fixtures/invalid/analysis-beats-not-ascending.json" }
     },
     {
+      "name": "analysis: duplicate detector id",
+      "expect": ["analysis/duplicate-detector-id"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-duplicate-detector-id.json" }
+    },
+    {
+      "name": "analysis: event references an undeclared detector",
+      "expect": ["analysis/unknown-detector-ref"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-unknown-detector-ref-event.json" }
+    },
+    {
+      "name": "analysis: beat references an undeclared detector",
+      "expect": ["analysis/unknown-detector-ref"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-unknown-detector-ref-beat.json" }
+    },
+    {
+      "name": "analysis: endKind bounded without endSec",
+      "expect": ["analysis/end-kind-mismatch"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-end-kind-bounded-without-end.json" }
+    },
+    {
+      "name": "analysis: endKind instantaneous but endSec present",
+      "expect": ["analysis/end-kind-mismatch"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-end-kind-instantaneous-with-end.json" }
+    },
+    {
+      "name": "analysis: endKind unknown but endSec present",
+      "expect": ["analysis/end-kind-mismatch"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-end-kind-unknown-with-end.json" }
+    },
+    {
+      "name": "analysis: events out of order at an equal timestamp",
+      "expect": ["analysis/events-not-ascending"],
+      "documents": { "analysis": "tests/fixtures/invalid/analysis-events-not-ascending.json" }
+    },
+    {
       "name": "chart: lane outside the playfield",
       "expect": ["chart/lane-out-of-range"],
       "documents": { "chart": "tests/fixtures/invalid/chart-lane-out-of-range.json" }

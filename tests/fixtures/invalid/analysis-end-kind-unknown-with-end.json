@@ -1,0 +1,1 @@
+{"version":"0.2.0","audio":{"path":"a.wav"},"detectors":[{"id":"d1","name":"t"}],"events":[{"id":"e1","type":"sustain","detectorId":"d1","endKind":"unknown","startSec":1.0,"endSec":2.0}]}

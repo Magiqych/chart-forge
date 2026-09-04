@@ -1,1 +1,1 @@
-{"version":"0.1.0","audio":{"path":"a.wav"},"stems":[{"id":"s1","kind":"drums"}],"events":[{"id":"e1","type":"onset","startSec":0.0,"source":{"stemId":"s2"}}]}
+{"version":"0.2.0","audio":{"path":"a.wav"},"detectors":[{"id":"d1","name":"t"}],"stems":[{"id":"s1","kind":"drums"}],"events":[{"id":"e1","type":"onset","detectorId":"d1","endKind":"instantaneous","startSec":0.0,"source":{"stemId":"s2"}}]}
