@@ -62,6 +62,19 @@ CODES = {
     "chart/end-lane-out-of-range": "a note ends outside the playfield",
     "chart/end-not-after-start": "endTimeSec is not after timeSec",
     "chart/hold-missing-end": "a held note has no endTimeSec",
+    "chart/waypoints-not-on-slide": "a note that is not a slide carries waypoints",
+    "chart/waypoints-without-end": "a slide has waypoints but no end",
+    "chart/waypoint-lane-out-of-range": "a slide waypoint sits outside the playfield",
+    "chart/waypoints-not-ascending": "a slide's points do not strictly ascend in time",
+    "chart/end-action-without-end": "a note has an endAction but no end to act at",
+    "chart/end-action-wrong-kind": "an endAction is on a kind that cannot carry one",
+    "chart/end-action-flick-without-direction": "a flick endAction names no direction",
+    "chart/connection-unknown-note": "a connection names a note that is not in the chart",
+    "chart/connection-self": "a connection joins a note to itself",
+    "chart/connection-endpoint-kind": "a connection joins notes of the wrong kind",
+    "chart/connection-not-forward": "a connection does not run forwards in time",
+    "chart/connection-duplicate": "the same two notes are connected twice",
+    "chart/connection-branches": "a note is connected onwards, or back to, more than once",
     "chart/notes-not-ascending": "notes are not in ascending time order",
     "chart/bpm-changes-not-ascending": "bpmChanges are not in ascending time order",
     "project/missing-reference": "a referenced document does not exist",
@@ -430,6 +443,197 @@ def check_analysis(document, label, problems):
         )
 
 
+#: Kinds that can finish with something other than an ordinary release. A tap, a purple
+#: and a flick are instants - there is no end for an action to happen at.
+END_ACTION_KINDS = ("hold", "slide")
+
+
+def check_note_end_action(note, note_id, label, problems):
+    """The rules the schema cannot state about how a note finishes.
+
+    JSON Schema can say an endAction is a {type, direction} object; it cannot say the note
+    must actually have an end for the action to happen at, or that only a held or
+    travelling note has one. Those are cross-field facts, so they live here.
+    """
+    action = note.get("endAction")
+    if action is None:
+        return
+
+    if note.get("endTimeSec") is None:
+        # Without an end there is no moment for the action to happen at, and a reader
+        # that ignored the field would see an instantaneous note - so the documented
+        # fallback would disagree with the full reading.
+        problems.add(
+            "chart/end-action-without-end",
+            "{0}: note {1!r} has an endAction but no endTimeSec".format(label, note_id),
+        )
+
+    if note["type"] not in END_ACTION_KINDS:
+        problems.add(
+            "chart/end-action-wrong-kind",
+            "{0}: {1} note {2!r} cannot carry an endAction; only {3} can".format(
+                label, note["type"], note_id, " and ".join(END_ACTION_KINDS)
+            ),
+        )
+
+    if action.get("type") == "flick" and action.get("direction") is None:
+        problems.add(
+            "chart/end-action-flick-without-direction",
+            "{0}: note {1!r} ends in a flick with no direction".format(label, note_id),
+        )
+
+
+#: What each kind of connection may join. A flick run is a run of flicks.
+CONNECTION_ENDPOINT_TYPES = {"flick": ("flick",)}
+
+
+def check_chart_connections(document, label, problems):
+    """Whether the links between notes describe runs that can actually be followed.
+
+    JSON Schema can say a connection is a {type, fromNoteId, toNoteId} object; it cannot
+    say the ids name notes that exist in *this* chart, that a run goes forwards, or that
+    no note is joined onwards twice. Those are facts about the document as a whole.
+
+    Note what is *not* checked separately: a loop. A connection must run strictly forwards
+    in time, so a sequence of them can never return to where it began - the forward rule
+    makes a cycle unrepresentable rather than merely forbidden.
+    """
+    connections = document.get("connections")
+    if not connections:
+        return
+
+    by_id = {note["id"]: note for note in document.get("notes", [])}
+    seen_pairs = set()
+    outgoing = set()
+    incoming = set()
+
+    for connection in connections:
+        source = connection["fromNoteId"]
+        target = connection["toNoteId"]
+
+        if source == target:
+            problems.add(
+                "chart/connection-self",
+                "{0}: a connection joins note {1!r} to itself".format(label, source),
+            )
+            continue
+
+        missing = [note_id for note_id in (source, target) if note_id not in by_id]
+        if missing:
+            problems.add(
+                "chart/connection-unknown-note",
+                "{0}: a connection names {1}, which is not in the chart".format(
+                    label, ", ".join(repr(note_id) for note_id in missing)
+                ),
+            )
+            continue
+
+        wanted = CONNECTION_ENDPOINT_TYPES.get(connection["type"])
+        if wanted is not None:
+            wrong = [
+                note_id for note_id in (source, target)
+                if by_id[note_id]["type"] not in wanted
+            ]
+            if wrong:
+                problems.add(
+                    "chart/connection-endpoint-kind",
+                    "{0}: a {1} connection joins {2}, which is not {3}".format(
+                        label, connection["type"],
+                        ", ".join(repr(note_id) for note_id in wrong),
+                        " or ".join(wanted),
+                    ),
+                )
+
+        if by_id[source]["timeSec"] >= by_id[target]["timeSec"]:
+            problems.add(
+                "chart/connection-not-forward",
+                "{0}: the connection {1!r} -> {2!r} does not run forwards in time".format(
+                    label, source, target
+                ),
+            )
+
+        pair = (source, target)
+        if pair in seen_pairs:
+            problems.add(
+                "chart/connection-duplicate",
+                "{0}: {1!r} -> {2!r} appears more than once".format(label, source, target),
+            )
+        seen_pairs.add(pair)
+
+        # One way onward and one way back, so every run is a simple chain that can be
+        # followed without choosing between branches.
+        if source in outgoing:
+            problems.add(
+                "chart/connection-branches",
+                "{0}: note {1!r} is connected onwards more than once".format(label, source),
+            )
+        if target in incoming:
+            problems.add(
+                "chart/connection-branches",
+                "{0}: note {1!r} is connected back to more than once".format(label, target),
+            )
+        outgoing.add(source)
+        incoming.add(target)
+
+
+def check_slide_waypoints(note, note_id, lane_count, label, problems):
+    """The rules the schema cannot state about a multi-point slide.
+
+    JSON Schema can say a waypoint is a {timeSec, lane} object; it cannot say the points
+    have to march forwards in time, that they must stay inside *this* chart's playfield,
+    or that only a slide travels. Those are cross-field facts, so they live here with the
+    other ones.
+    """
+    waypoints = note.get("waypoints")
+    if waypoints is None:
+        return
+
+    if note["type"] != "slide":
+        problems.add(
+            "chart/waypoints-not-on-slide",
+            "{0}: {1} note {2!r} carries waypoints; only a slide travels".format(
+                label, note["type"], note_id
+            ),
+        )
+
+    end_time = note.get("endTimeSec")
+    end_lane = note.get("endLane")
+    if end_time is None or end_lane is None:
+        # Waypoints are the middle of a journey. Without an end there is no journey, and
+        # a reader that ignored `waypoints` would see a lone point rather than a slide -
+        # so the documented fallback would disagree with the full reading.
+        problems.add(
+            "chart/waypoints-without-end",
+            "{0}: note {1!r} has waypoints but no endTimeSec/endLane".format(
+                label, note_id
+            ),
+        )
+
+    for index, point in enumerate(waypoints):
+        if not 0 <= point["lane"] < lane_count:
+            problems.add(
+                "chart/waypoint-lane-out-of-range",
+                "{0}: note {1!r} waypoint {2} is in lane {3}, outside 0..{4}".format(
+                    label, note_id, index, point["lane"], lane_count - 1
+                ),
+            )
+
+    # Every point of the slide, start to end, must be strictly later than the one before.
+    # Two points at the same instant are not a direction to travel in, and a point out of
+    # order would make the drawn path double back on itself.
+    times = [note["timeSec"]]
+    times.extend(point["timeSec"] for point in waypoints)
+    if end_time is not None:
+        times.append(end_time)
+    if any(later <= earlier for earlier, later in zip(times, times[1:])):
+        problems.add(
+            "chart/waypoints-not-ascending",
+            "{0}: note {1!r} has points at {2}, which do not strictly ascend".format(
+                label, note_id, times
+            ),
+        )
+
+
 def check_chart(document, label, problems):
     lane_count = document["playfield"]["laneCount"]
 
@@ -470,11 +674,20 @@ def check_chart(document, label, problems):
                     label, note_id, end_time, note["timeSec"]
                 ),
             )
-        if note["type"] in ("hold", "slide") and end_time is None:
+        # A hold with no end is not a hold. A slide with no end is a single judgement
+        # point that has not been joined to another one yet - a legitimate thing to have
+        # saved halfway through building a slide, and the shape the Editor places one
+        # point at a time.
+        if note["type"] == "hold" and end_time is None:
             problems.add(
                 "chart/hold-missing-end",
-                "{0}: {1} note {2!r} has no endTimeSec".format(label, note["type"], note_id),
+                "{0}: hold note {1!r} has no endTimeSec".format(label, note_id),
             )
+
+        check_slide_waypoints(note, note_id, lane_count, label, problems)
+        check_note_end_action(note, note_id, label, problems)
+
+    check_chart_connections(document, label, problems)
 
     times = [note["timeSec"] for note in document.get("notes", [])]
     if not is_ascending(times):

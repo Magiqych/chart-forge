@@ -54,7 +54,30 @@ body {
   min-width: 120px;
 }
 
-.toolbar .spacer { flex: 1; }
+/* The same rule the chart bar follows: controls keep their size and never wrap, and the
+   one piece of running text gives way instead. A toolbar that grows a second line pushes
+   the timeline down and every lane band with it. */
+.toolbar > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.toolbar .spacer { flex: 1 1 auto; }
+
+.toolbar button.icon {
+  padding: 4px 9px;
+  font-size: 14px;
+  line-height: 1;
+  min-width: 32px;
+}
+
+.toolbar .volume { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.toolbar .volume input { width: 90px; }
+.toolbar .volume-value {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  min-width: 5ch;
+  text-align: right;
+}
 
 .toolbar .zoom { display: flex; align-items: center; gap: 8px; color: var(--muted); }
 .toolbar .zoom input { width: 160px; }
@@ -65,6 +88,8 @@ body {
 }
 
 .toolbar .status {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
@@ -153,6 +178,23 @@ body {
   flex: 0 0 auto;
 }
 
+/* The bar sits above the timeline, so anything that makes it taller moves the canvas
+   and every lane band with it - clicks then land in the wrong lane. Shortening a label
+   only postpones that; the rule is that the controls keep their size and never wrap
+   internally, and the two pieces of running text give way instead. */
+.chartbar > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.chartbar .spacer { flex: 1 1 auto; }
+.chartbar-count,
+.chartbar-message {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .chartbar-title {
   font-size: 10px;
   letter-spacing: 0.14em;
@@ -210,6 +252,46 @@ body {
   width: 1px;
   height: 20px;
   background: #2e3b4d;
+}
+
+/* A pair or trio of mutually exclusive buttons that reads as one control. Used where
+   which option is active has to be legible without opening anything - the Edit/Select
+   mode above all, because it changes what every click in the lanes means. */
+.segmented {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid #33425a;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.segmented .seg {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: #1b2432;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented .seg + .seg { border-left: 1px solid #33425a; }
+.segmented .seg:hover:not(:disabled) { background: #223045; color: var(--text); }
+
+.segmented .seg.on {
+  background: #2f6fd0;
+  color: #f2f6ff;
+}
+
+.segmented .seg:disabled { opacity: 0.45; cursor: default; }
+
+.chartbar-selection {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .chartbar-count {
@@ -270,6 +352,48 @@ body {
   color: #5d6a7a;
 }
 
+/* The headline of a multiple selection: the number is the thing the author needs
+   before pressing Delete, so it is read first and the per-type breakdown follows. */
+/* A one-line note on what the selected note can have done to it. Direct manipulation is
+   only usable if it is discoverable, and a three-pixel grip advertises nothing. */
+.inspector-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #5d6a7a;
+}
+
+/* A labelled control inside the read-only readout. Kept visually apart from the
+   definition list above it, so it is clear which parts can be changed and which report. */
+.inspector-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.inspector-fieldlabel {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.inspector-field .segmented .seg {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.inspector-action {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.inspector-count {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text);
+}
+
 .inspector-grid {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -292,3 +416,93 @@ body {
 }
 
 .inspector-id { color: var(--muted); }
+
+/* Undo and redo are glyph-only so the bar keeps to one line at the widths the
+   timeline is actually used at. */
+.chartbar button.icon {
+  padding: 4px 9px;
+  font-size: 15px;
+  line-height: 1;
+  min-width: 32px;
+}
+
+/* The timeline's scrollbar. Drawn rather than native, because a native one owns a
+   scrollLeft and that would be a second copy of viewport.startSec. */
+.timeline-scrollbar {
+  position: relative;
+  height: 12px;
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  background: #12161c;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.timeline-scrollbar .scroll-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 4px;
+  background: #3a4757;
+}
+
+.timeline-scrollbar .scroll-thumb:hover { background: #48586b; }
+
+/* Nothing to scroll: the thumb fills the track and does not invite a drag. */
+.timeline-scrollbar .scroll-thumb.inert {
+  background: #1c232d;
+  cursor: default;
+}
+
+.timeline-host {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A toggled-on icon button reads as pressed rather than merely hovered. */
+.toolbar button.icon.on,
+.chartbar button.icon.on {
+  background: #2f6fd0;
+  border-color: #4d8ff0;
+  color: #ffffff;
+}
+
+.toolbar .field { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+.toolbar select {
+  background: #232c38;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+}
+.toolbar select:disabled { opacity: 0.4; }
+
+/* Keyboard focus has to be visible: several of these controls are now reachable by
+   keyboard alone, and an invisible focus ring makes that useless. */
+.toolbar button:focus-visible,
+.chartbar button:focus-visible,
+.toolbar select:focus-visible,
+.chartbar select:focus-visible,
+.toolbar input:focus-visible,
+.chartbar input:focus-visible,
+.layer-panel input:focus-visible {
+  outline: 2px solid #7fb0f5;
+  outline-offset: 1px;
+}
+
+/* Deleting is destructive and there is no confirmation, so the button sits at the foot
+   of the readout rather than among the values, and is quiet until it is reached for. */
+.inspector-delete {
+  margin-top: 10px;
+  width: 100%;
+  background: #2a2230;
+  color: #e2bcbc;
+  border: 1px solid #4a3340;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.inspector-delete:hover { background: #3a2a34; border-color: #6a4450; color: #f3d6d6; }

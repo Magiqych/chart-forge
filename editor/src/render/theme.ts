@@ -59,11 +59,71 @@ export const theme = {
     border: "#a9c9fb",
     selectedFill: "#f2f6ff",
     selectedBorder: "#ffffff",
-    heightPx: 14,
-    widthPx: 20,
+    /**
+     * Fill per authored kind.
+     *
+     * Colour is what separates one instantaneous kind from another; the shape stays a
+     * bar for all of them, so the visual language does not fragment. A kind that is not
+     * listed - and the vocabulary is open, so there will be some - falls back to `fill`.
+     */
+    byType: {
+      tap: "#4d8ff0",
+      flick: "#4d8ff0",
+    } as Readonly<Record<string, string>>,
+    borderByType: {
+    } as Readonly<Record<string, string>>,
+
+    /** A held note's body is lighter than its caps, so the ends read as ends. */
+    boundedBody: "#3f7ad4",
+    boundedCap: "#cfe0fb",
+    /** The lane-change connector of a slide. */
+    connector: "#7fb0f5",
     radiusPx: 3,
     borderWidth: 1.5,
-    flickMarker: "#12161c",
+    flickMarker: "#0d1218",
+    flickArrowPx: 9,
+    /** Halo behind a selected note, so it is findable among its neighbours. */
+    selectedHalo: "rgba(255, 255, 255, 0.22)",
+    selectedHaloPx: 3,
+
+    /**
+     * The slide trajectory: a translucent ribbon with a brighter line down it.
+     *
+     * Deliberately unlike the held body's fill. A Long is time under the finger; a slide
+     * connector is a path between two instants, and the two must not be mistaken for one
+     * another at a glance.
+     */
+    connectorRibbon: "rgba(120, 200, 236, 0.22)",
+    connectorRibbonPx: 9,
+    connectorLinePx: 2,
+    /** Dotted, so a slide's route can never be mistaken for a Long's held body. */
+    connectorDash: [2, 5] as readonly number[],
+
+    /**
+     * A run of flicks: a thin **solid** line, deliberately unlike the slide's dotted one.
+     *
+     * The two say different things. A slide's dots are a path a finger follows between
+     * checkpoints of one note; a run's line joins separate notes that are swiped through
+     * in one motion. Solid against dotted tells them apart at a glance without either
+     * needing a label, and thin keeps the timeline readable rather than imitating the
+     * game's thick ribbon.
+     */
+    runConnector: "#7fd6a8",
+    runConnectorSelected: "#ffffff",
+    runConnectorPx: 1.5,
+
+    /** How much wider a marker gets when selected. It stays a bar, it does not become a box. */
+    selectedMarkerGrowPx: 2,
+
+    /** The grip at the end of a Long: quiet until the note is selected. */
+    resizeHandle: "rgba(169, 201, 251, 0.30)",
+    resizeHandleOn: "#ffffff",
+  },
+
+  /** The rubber band. Transient, like the preview: it selects, it never edits. */
+  marquee: {
+    fill: "rgba(127, 176, 245, 0.14)",
+    border: "rgba(169, 201, 251, 0.85)",
   },
 
   /** Transient interaction feedback. Never part of the document. */

@@ -101,6 +101,9 @@ target/
 *.swo
 *~
 
+# A workspace file describes one person's local checkout, not the project.
+*.code-workspace
+
 # --- OS --------------------------------------------------------------------
 # Windows
 Thumbs.db

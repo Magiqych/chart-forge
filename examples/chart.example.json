@@ -57,7 +57,53 @@
       "lane": 3,
       "endTimeSec": 3.0,
       "endLane": 1
+    },
+    {
+      "id": "n-0006",
+      "type": "slide",
+      "timeSec": 3.5,
+      "lane": 0,
+      "waypoints": [
+        { "timeSec": 3.75, "lane": 2 },
+        { "timeSec": 4.0, "lane": 3 }
+      ],
+      "endTimeSec": 4.25,
+      "endLane": 1,
+      "endAction": { "type": "flick", "direction": "right" }
+    },
+    {
+      "id": "n-0007",
+      "type": "hold",
+      "timeSec": 5.0,
+      "lane": 4,
+      "endTimeSec": 6.0,
+      "endAction": { "type": "flick", "direction": "left" }
+    },
+    {
+      "id": "n-0008",
+      "type": "flick",
+      "timeSec": 7.0,
+      "lane": 0,
+      "direction": "right"
+    },
+    {
+      "id": "n-0009",
+      "type": "flick",
+      "timeSec": 7.25,
+      "lane": 2,
+      "direction": "right"
+    },
+    {
+      "id": "n-0010",
+      "type": "flick",
+      "timeSec": 7.5,
+      "lane": 4,
+      "direction": "left"
     }
+  ],
+  "connections": [
+    { "type": "flick", "fromNoteId": "n-0008", "toNoteId": "n-0009" },
+    { "type": "flick", "fromNoteId": "n-0009", "toNoteId": "n-0010" }
   ],
   "extensions": {}
 }

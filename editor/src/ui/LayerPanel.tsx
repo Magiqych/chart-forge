@@ -7,9 +7,11 @@
  */
 
 import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
+import type { ChartNote, FlickDirection } from "../core/chart";
 import type { RowId } from "../core/lanes";
 import { theme } from "../render/theme";
 import { EventInspector } from "./EventInspector";
+import { NoteInspector } from "./NoteInspector";
 
 export type LayerKey = RowId | "grid";
 
@@ -23,6 +25,20 @@ export interface LayerPanelProps {
    * editing anything.
    */
   readonly selectedEvent: ProjectedEvent | null;
+  /**
+   * The selected Chart Note. Reported beside the event, never merged with it: one is a
+   * measurement the author is consulting, the other is what they wrote.
+   */
+  readonly selectedNotes: readonly ChartNote[];
+  readonly onDeleteNote: () => void;
+  readonly canConnect: boolean;
+  readonly connectHint: string;
+  readonly onConnect: () => void;
+  readonly onDisconnect: () => void;
+  readonly onEndAction: (direction: FlickDirection | null) => void;
+  readonly onFlickDirection: (direction: FlickDirection) => void;
+  /** How many flicks the selected run has, or 0 when the selection is not one. */
+  readonly runSize: number;
 }
 
 interface LayerRow {
@@ -53,7 +69,11 @@ function countFor(projection: AnalysisProjection | null, key: LayerKey): string 
 }
 
 export function LayerPanel(
-  { projection, visible, onToggle, selectedEvent }: LayerPanelProps,
+  {
+    projection, visible, onToggle, selectedEvent, selectedNotes, onDeleteNote,
+    canConnect, connectHint, onConnect, onDisconnect, onEndAction, onFlickDirection,
+    runSize,
+  }: LayerPanelProps,
 ): React.JSX.Element {
   return (
     <aside className="layer-panel">
@@ -74,6 +94,18 @@ export function LayerPanel(
           </li>
         ))}
       </ul>
+
+      <NoteInspector
+        notes={selectedNotes}
+        onDelete={onDeleteNote}
+        canConnect={canConnect}
+        connectHint={connectHint}
+        onConnect={onConnect}
+        onDisconnect={onDisconnect}
+        onEndAction={onEndAction}
+        onFlickDirection={onFlickDirection}
+        runSize={runSize}
+      />
 
       <EventInspector event={selectedEvent} projection={projection} />
 

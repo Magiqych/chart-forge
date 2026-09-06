@@ -1,5 +1,5 @@
 /**
- * Beat-grid snapping.
+ * Beat-grid snapping, and the resolver every placement time goes through.
  *
  * The snap grid is built by subdividing the *detected* beats, never by generating a
  * uniform grid from a tempo number. The Analyzer emits `beats[]` and no tempo map; a
@@ -14,20 +14,27 @@
  * into the author. Choosing the mode is the author saying which of the two they mean.
  */
 
+import {
+  guideRadiusSec, nearestGuideAnchor, type GuideAnchor,
+} from "./guideAnchors";
+
 /**
  * What the timeline snaps a raw click to.
  *
- * `beat` and `event` are different questions, not two strengths of the same one: a beat
+ * `beat` and `guide` are different questions, not two strengths of the same one: a beat
  * is where the music is counted, an onset is where a sound actually started. Mixing them
  * into one "snap harder" control would hide which of the two a note was aligned to, so
  * the modes are exclusive.
  *
+ * `guide` snaps to the Analysis Events in the layers that are switched on - the same set
+ * the arrow keys walk - which is what turns the overlay from something to look at into
+ * something to aim at.
+ *
  * Only `off` and `beat` survive a reload. The Project contract's `editor.snap` object is
  * closed - `{enabled, division}` and nothing else - so there is nowhere to record a third
- * mode without extending it, and `event` is experimental enough not to justify that. It
- * reads back as `off`.
+ * mode without extending it. `guide` reads back as `off`.
  */
-export type SnapMode = "off" | "beat" | "event";
+export type SnapMode = "off" | "beat" | "guide";
 
 /** `project.editor.snap`, as the Project contract defines it. */
 export interface SnapSettings {
@@ -37,9 +44,6 @@ export interface SnapSettings {
 }
 
 export const DEFAULT_SNAP: SnapSettings = { enabled: true, division: 1 };
-
-/** How close a click must be to an event start for event snapping to take it. */
-export const EVENT_SNAP_THRESHOLD_PX = 10;
 
 /** Divisions the toolbar offers. 1 is the detected beat itself. */
 export const SNAP_DIVISIONS = [1, 2, 3, 4, 6, 8] as const;
@@ -119,39 +123,62 @@ export function readSnapSettings(editor: unknown): SnapSettings {
 }
 
 
-/**
- * Snap to the nearest Analysis Event start, within a screen-distance threshold.
- *
- * The threshold is in pixels, not seconds, so it means the same thing to the hand at
- * every zoom level: zoomed out, "near" covers a wide slice of time and snapping is
- * coarse; zoomed in, it narrows until the author can place a note between two onsets.
- * A time-based threshold would do the opposite of what the eye expects.
- *
- * Only `startSec` is a target. A bounded event's `endSec` is where a measured sound
- * stopped, which is not a moment a player is asked to hit.
- *
- * Returns the raw time unchanged when nothing is close enough: nothing is ever dragged
- * across the screen to an event the author was not aiming at.
- */
-export function snapToNearestEventStart(
-  rawSec: number,
-  events: readonly { readonly startSec: number }[],
-  pixelsPerSecond: number,
-  thresholdPx: number = EVENT_SNAP_THRESHOLD_PX,
-): number {
-  if (events.length === 0 || pixelsPerSecond <= 0) return rawSec;
-  const thresholdSec = thresholdPx / pixelsPerSecond;
 
-  let bestSec = rawSec;
-  let bestDistance = thresholdSec;
-  for (const event of events) {
-    const distance = Math.abs(event.startSec - rawSec);
-    // Strictly nearer, so the earliest of several equidistant events wins and the
-    // result does not depend on the order they happen to be scanned in.
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestSec = event.startSec;
-    }
+
+/**
+ * The one place a raw pointer time becomes the time a note is written at.
+ *
+ * Every placement goes through here - Single, Purple, Flick, a Slide point, the start and
+ * the end of a Long as it is drawn, and the end of a Long as it is dragged. A kind that
+ * took a different route would be a kind that snapped differently, and the author would
+ * have no way to know which ones did.
+ *
+ * Pure, and given everything it needs, so what each mode does can be tested without a
+ * canvas or a pointer.
+ */
+export interface PlacementSnapContext {
+  readonly rawTimeSec: number;
+  readonly snapMode: SnapMode;
+  /** Beat-grid settings. Only consulted in `beat` mode. */
+  readonly snap: SnapSettings;
+  /** Subdivided detected beats. Only consulted in `beat` mode. */
+  readonly grid: readonly number[];
+  /** Guide anchors. Only consulted in `guide` mode. */
+  readonly anchors: readonly GuideAnchor[];
+  readonly pixelsPerSecond: number;
+  readonly radiusPx?: number;
+}
+
+export interface PlacementSnapResult {
+  /** Where the note goes. The raw time when nothing took it. */
+  readonly timeSec: number;
+  /**
+   * The guide anchor it landed on, when it landed on one.
+   *
+   * Reported rather than swallowed so the caller can say what happened, and so a new
+   * note can record the event it was aimed at as its `sourceEventId`.
+   */
+  readonly anchor: GuideAnchor | null;
+}
+
+export function resolvePlacementTime(
+  context: PlacementSnapContext,
+): PlacementSnapResult {
+  const raw = Math.max(0, context.rawTimeSec);
+
+  if (context.snapMode === "beat") {
+    return { timeSec: Math.max(0, snapTime(raw, context.grid, context.snap)), anchor: null };
   }
-  return bestSec;
+
+  if (context.snapMode === "guide") {
+    const radiusSec = guideRadiusSec(context.pixelsPerSecond, context.radiusPx);
+    const anchor = nearestGuideAnchor(context.anchors, raw, radiusSec);
+    // Nothing within reach means the author was not aiming at anything, so their own
+    // click stands rather than being dragged somewhere they did not point.
+    return anchor === null
+      ? { timeSec: raw, anchor: null }
+      : { timeSec: Math.max(0, anchor.timeSec), anchor };
+  }
+
+  return { timeSec: raw, anchor: null };
 }

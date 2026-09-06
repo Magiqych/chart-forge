@@ -136,3 +136,195 @@ export function maxBoundedDuration(
   }
   return longest;
 }
+
+/**
+ * Geometry of the horizontal scrollbar.
+ *
+ * Derived from the viewport every time it is needed, never stored. A scrollbar that kept
+ * its own position would be a second copy of `startSec`, and the two would disagree the
+ * moment anything else moved the view - a zoom, a pan, a seek, loading a project. There
+ * is one piece of state, and this function is a view of it.
+ */
+export interface ScrollbarGeometry {
+  /** Left edge of the thumb within the track, in CSS pixels. */
+  readonly thumbLeftPx: number;
+  readonly thumbWidthPx: number;
+  readonly trackWidthPx: number;
+  /** False when the whole track already fits on screen and there is nowhere to scroll. */
+  readonly scrollable: boolean;
+}
+
+/**
+ * Smallest thumb we will draw.
+ *
+ * A three-minute song at high zoom would otherwise produce a thumb a fraction of a pixel
+ * wide - accurate, and impossible to grab.
+ */
+export const MIN_SCROLL_THUMB_PX = 28;
+
+/** Total seconds the scrollbar spans: the track, or the screen when that is longer. */
+export function scrollableSpanSec(view: Viewport, durationSec: number): number {
+  return Math.max(durationSec, viewportDurationSec(view));
+}
+
+/** The largest `startSec` that still shows content, i.e. the end of the scroll range. */
+export function maxScrollStartSec(view: Viewport, durationSec: number): number {
+  return Math.max(0, scrollableSpanSec(view, durationSec) - viewportDurationSec(view));
+}
+
+export function scrollbarGeometry(
+  view: Viewport,
+  durationSec: number,
+  trackWidthPx: number,
+  minThumbPx: number = MIN_SCROLL_THUMB_PX,
+): ScrollbarGeometry {
+  const track = Math.max(0, trackWidthPx);
+  const span = scrollableSpanSec(view, durationSec);
+  const visible = viewportDurationSec(view);
+
+  if (track === 0 || span <= 0) {
+    return { thumbLeftPx: 0, thumbWidthPx: track, trackWidthPx: track, scrollable: false };
+  }
+
+  const proportional = track * (visible / span);
+  const thumbWidthPx = Math.min(track, Math.max(Math.min(minThumbPx, track), proportional));
+
+  const maxStart = maxScrollStartSec(view, durationSec);
+  const travel = track - thumbWidthPx;
+  const fraction = maxStart > 0 ? Math.min(1, Math.max(0, view.startSec / maxStart)) : 0;
+
+  return {
+    thumbLeftPx: travel * fraction,
+    thumbWidthPx,
+    trackWidthPx: track,
+    scrollable: maxStart > 0 && travel > 0,
+  };
+}
+
+/**
+ * The `startSec` that would put the thumb's left edge at `thumbLeftPx`.
+ *
+ * The exact inverse of `scrollbarGeometry`, so dragging the thumb and reading its
+ * position back give the same number rather than drifting a pixel per drag.
+ */
+export function startSecForThumbLeft(
+  thumbLeftPx: number,
+  view: Viewport,
+  durationSec: number,
+  trackWidthPx: number,
+  minThumbPx: number = MIN_SCROLL_THUMB_PX,
+): number {
+  const geometry = scrollbarGeometry(view, durationSec, trackWidthPx, minThumbPx);
+  const travel = geometry.trackWidthPx - geometry.thumbWidthPx;
+  const maxStart = maxScrollStartSec(view, durationSec);
+  if (travel <= 0 || maxStart <= 0) return 0;
+
+  const fraction = Math.min(1, Math.max(0, thumbLeftPx / travel));
+  return fraction * maxStart;
+}
+
+/**
+ * Where the view should start for a time to sit in the middle of it.
+ *
+ * The Locate Playhead action. Clamped like every other way of moving the view, so
+ * locating a playhead near either end of the song scrolls as far as it can and no
+ * further rather than leaving blank space on screen.
+ */
+export function centreOnTime(view: Viewport, timeSec: number, durationSec: number): number {
+  return clampViewportStart(timeSec - viewportDurationSec(view) / 2, view, durationSec);
+}
+
+/**
+ * The safety zone: fractions of the width a followed playhead is allowed to sit between.
+ *
+ * While it is inside this band nothing moves and the playhead itself travels across the
+ * screen, which is what makes the timeline readable. Only when it reaches the edge of the
+ * band does the view step.
+ */
+export const FOLLOW_LOW_FRACTION = 0.2;
+export const FOLLOW_HIGH_FRACTION = 0.78;
+/**
+ * Where the playhead is put when the view has to be moved.
+ *
+ * Deliberately near the low edge of the band rather than in the middle: landing it at
+ * 30% gives it most of the width to travel before the next step, so playback scrolls in
+ * occasional readable jumps instead of creeping continuously under the eye.
+ */
+export const FOLLOW_LEAD_FRACTION = 0.3;
+
+/**
+ * Where the view should start to keep a playing playhead on screen, or null to leave it.
+ *
+ * Deliberately a step rather than a slide: while the playhead sits in the comfortable
+ * band the view does not move at all, and when it leaves the band the view jumps once so
+ * the playhead lands well inside it. Nudging every frame would make the whole timeline
+ * creep under the eye, which is far harder to read than an occasional jump.
+ *
+ * Returns a start time, not a viewport: there is exactly one viewport, and the caller
+ * writes this into it. Nothing here keeps a scroll position of its own.
+ */
+export function followStartSec(
+  view: Viewport,
+  playheadSec: number,
+  durationSec: number,
+): number | null {
+  const span = viewportDurationSec(view);
+  if (span <= 0) return null;
+
+  const offset = playheadSec - view.startSec;
+  if (offset >= span * FOLLOW_LOW_FRACTION && offset <= span * FOLLOW_HIGH_FRACTION) {
+    return null;
+  }
+
+  const wanted = clampViewportStart(
+    playheadSec - span * FOLLOW_LEAD_FRACTION,
+    view,
+    durationSec,
+  );
+  return wanted === view.startSec ? null : wanted;
+}
+
+/**
+ * Where the view should start after a zoom, or null to leave it where the zoom put it.
+ *
+ * The one rule, in one place, so the wheel and the zoom slider cannot drift apart. With
+ * Follow on it is Follow's answer, because Follow has already promised the author where
+ * the playhead will sit and a zoom must not overrule that. With Follow off the view only
+ * moves when the playhead has actually left the screen.
+ */
+export function startSecAfterZoom(
+  view: Viewport,
+  playheadSec: number,
+  durationSec: number,
+  following: boolean,
+): number | null {
+  return following
+    ? followStartSec(view, playheadSec, durationSec)
+    : revealStartSec(view, playheadSec, durationSec);
+}
+
+/** Whether a time is on screen at all. */
+export function isTimeVisible(view: Viewport, timeSec: number): boolean {
+  return timeSec >= view.startSec && timeSec <= viewportEndSec(view);
+}
+
+/**
+ * Where the view should start so a time is on screen, or null to leave it alone.
+ *
+ * Used after a zoom. Zooming keeps the time under the cursor fixed, which is right, but
+ * it can carry the playhead off the edge - and a playhead you cannot see is a playhead
+ * you have lost. When it is still visible the view does not move at all: jumping the
+ * timeline on every zoom would be far more disruptive than the occasional recentre.
+ *
+ * When it has gone, the playhead is brought back to the middle rather than to the edge
+ * it left by, because an edge is where it is about to disappear from again.
+ */
+export function revealStartSec(
+  view: Viewport,
+  timeSec: number,
+  durationSec: number,
+): number | null {
+  if (isTimeVisible(view, timeSec)) return null;
+  const wanted = centreOnTime(view, timeSec, durationSec);
+  return wanted === view.startSec ? null : wanted;
+}

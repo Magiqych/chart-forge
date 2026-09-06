@@ -148,6 +148,71 @@
       "name": "project: project and inline analysis disagree on the audio hash",
       "expect": ["cross/audio-sha256-mismatch"],
       "documents": { "project": "tests/fixtures/invalid/project-audio-sha256-mismatch.json" }
+    },
+    {
+      "name": "chart: waypoints on a note that does not travel",
+      "expect": ["chart/waypoints-not-on-slide"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-waypoints-not-on-slide.json" }
+    },
+    {
+      "name": "chart: slide has waypoints but no end",
+      "expect": ["chart/waypoints-without-end"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-waypoints-without-end.json" }
+    },
+    {
+      "name": "chart: slide waypoint outside the playfield",
+      "expect": ["chart/waypoint-lane-out-of-range"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-waypoint-lane-out-of-range.json" }
+    },
+    {
+      "name": "chart: slide points do not ascend in time",
+      "expect": ["chart/waypoints-not-ascending"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-waypoints-not-ascending.json" }
+    },
+    {
+      "name": "chart: endAction on a kind that has no end",
+      "expect": ["chart/end-action-wrong-kind"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-end-action-wrong-kind.json" }
+    },
+    {
+      "name": "chart: endAction on a note with no end",
+      "expect": ["chart/end-action-without-end"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-end-action-without-end.json" }
+    },
+    {
+      "name": "chart: flick endAction with no direction",
+      "expect": ["chart/end-action-flick-without-direction"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-end-action-flick-without-direction.json" }
+    },
+    {
+      "name": "chart: connection names a note that is not there",
+      "expect": ["chart/connection-unknown-note"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-unknown-note.json" }
+    },
+    {
+      "name": "chart: connection joins a note to itself",
+      "expect": ["chart/connection-self"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-self.json" }
+    },
+    {
+      "name": "chart: flick connection joins something that is not a flick",
+      "expect": ["chart/connection-endpoint-kind"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-endpoint-kind.json" }
+    },
+    {
+      "name": "chart: connection runs backwards in time",
+      "expect": ["chart/connection-not-forward"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-not-forward.json" }
+    },
+    {
+      "name": "chart: the same two notes are connected twice",
+      "expect": ["chart/connection-duplicate", "chart/connection-branches"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-duplicate.json" }
+    },
+    {
+      "name": "chart: a note is connected onwards twice",
+      "expect": ["chart/connection-branches"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-connection-branches.json" }
     }
   ]
 }

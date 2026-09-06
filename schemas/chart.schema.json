@@ -112,6 +112,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/chartNote" }
     },
+    "connections": {
+      "description": "Links between notes that are played as one run. Optional and additive: a chart without it is a chart of independent notes, and a reader that ignores it sees exactly that - every note still has its own time, lane and direction, and is still playable on its own. Each link names two notes by id; no note is altered by being linked.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/chartConnection" }
+    },
     "extensions": {
       "description": "Namespace for game-specific data, keyed by profile name (for example an object under the key 'deresute'). The core model above must remain meaningful when every extension is ignored, and a Player that does not understand an extension must still be able to play the chart.",
       "type": "object",
@@ -129,6 +134,66 @@
       "type": "number",
       "minimum": 0
     },
+    "direction": {
+      "description": "A swipe direction, as one of the eight compass points.",
+      "type": "string",
+      "enum": ["left", "right", "up", "down", "upLeft", "upRight", "downLeft", "downRight"]
+    },
+    "noteEndAction": {
+      "description": "What the player does at the end of a note that has one, when it is something other than simply releasing. Absent means an ordinary release. Deliberately its own object rather than a reuse of the note's 'direction': on a hold or a slide, 'direction' would be ambiguous about whether it described the start or the end, and this says plainly that it is the end. An object rather than a bare string so other end actions can be added later without another shape change.",
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "The kind of end action. Open vocabulary, like chartNote.type; a Player that meets an unknown one should report it rather than guess.",
+          "type": "string",
+          "examples": ["flick"]
+        },
+        "direction": {
+          "description": "Swipe direction, for an end action that has one.",
+          "$ref": "#/$defs/direction"
+        }
+      }
+    },
+    "slideWaypoint": {
+      "description": "One intermediate judgement point of a slide: a moment the player must have reached, and the lane they must have reached it in. A waypoint is an instant, not a duration; a slide is judged at its points and travelled between them.",
+      "type": "object",
+      "required": ["timeSec", "lane"],
+      "additionalProperties": false,
+      "properties": {
+        "timeSec": {
+          "description": "When this point of the slide must be reached.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "lane": {
+          "description": "Lane this point is in, 0-based from the left, less than playfield.laneCount.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "chartConnection": {
+      "description": "A link between two notes that are played as one run, such as a sequence of flicks swiped through in a single motion. Both notes keep their own id, time, lane and direction; this only says they are joined. It carries no judgement of its own - nothing happens on the link itself, only at the notes it joins.",
+      "type": "object",
+      "required": ["type", "fromNoteId", "toNoteId"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "What kind of run this link belongs to. Open vocabulary, like chartNote.type; a Player that meets an unknown one should report it rather than guess.",
+          "type": "string",
+          "examples": ["flick"]
+        },
+        "fromNoteId": {
+          "description": "The earlier note, by 'timeSec'.",
+          "$ref": "#/$defs/id"
+        },
+        "toNoteId": {
+          "description": "The later note. Must be strictly after 'fromNoteId' in time, which is what keeps a run a run and makes a loop unrepresentable.",
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
     "chartNote": {
       "type": "object",
       "required": ["id", "type", "timeSec", "lane"],
@@ -136,7 +201,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "type": {
-          "description": "Gameplay kind of the note. 'tap' is a single hit; 'hold' is held from 'timeSec' to 'endTimeSec'; 'flick' is a directional swipe; 'slide' is a hold whose lane may move, using 'endLane'. Open vocabulary; a Player that meets an unknown type should report it rather than guess.",
+          "description": "Gameplay kind of the note. 'tap' is a single hit; 'hold' is held from 'timeSec' to 'endTimeSec'; 'flick' is a directional swipe; 'slide' is a chain of judgement points travelled between lanes, using 'waypoints' and 'endLane'. Open vocabulary; a Player that meets an unknown type should report it rather than guess.",
           "type": "string",
           "examples": ["tap", "hold", "flick", "slide"]
         },
@@ -150,7 +215,7 @@
           "minimum": 0
         },
         "endTimeSec": {
-          "description": "When a held note is released. Required in practice for 'hold' and 'slide'; absent for instantaneous notes. Must be greater than 'timeSec'.",
+          "description": "When a held note is released, or when a slide reaches its last point. Required in practice for 'hold'; absent for instantaneous notes, and absent for a slide point that has not been joined to another. Must be greater than 'timeSec'.",
           "$ref": "#/$defs/timeSec"
         },
         "endLane": {
@@ -158,10 +223,18 @@
           "type": "integer",
           "minimum": 0
         },
+        "endAction": {
+          "description": "What happens at 'endTimeSec', when it is something other than an ordinary release - a Long or a Slide that finishes with a flick, for example. Only meaningful on a note that has an end. Optional and additive: a reader that ignores it still sees a correct note that simply releases at the end.",
+          "$ref": "#/$defs/noteEndAction"
+        },
+        "waypoints": {
+          "description": "Intermediate judgement points of a multi-point slide, between 'timeSec'/'lane' and 'endTimeSec'/'endLane', in strictly ascending time order. Only meaningful on a slide. Optional and additive: a reader that ignores it still sees a valid slide with the correct start and end, which is the documented fallback.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/slideWaypoint" }
+        },
         "direction": {
           "description": "Swipe direction for directional notes such as flicks.",
-          "type": "string",
-          "enum": ["left", "right", "up", "down", "upLeft", "upRight", "downLeft", "downRight"]
+          "$ref": "#/$defs/direction"
         },
         "sourceEventId": {
           "description": "Optional provenance: the id of the Analysis Event the author was looking at when placing this note. It is a human-authored back-reference for tooling and re-analysis, never a claim that the note was generated from the event, and a Player must ignore it.",

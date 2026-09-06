@@ -1,0 +1,1 @@
+{"version":"0.1.0","audio":{"path":"a.wav"},"timing":{"offsetSec":0.0},"playfield":{"laneCount":5},"notes":[{"id":"n1","type":"slide","timeSec":0.0,"lane":0,"endTimeSec":1.0,"endLane":4,"waypoints":[{"timeSec":0.7,"lane":2},{"timeSec":0.3,"lane":3}]}]}
