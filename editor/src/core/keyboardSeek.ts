@@ -17,11 +17,16 @@ import { type Viewport } from "./viewport";
  * How far the playhead moves on screen per press, in CSS pixels.
  *
  * Small enough to place a note against a waveform edge, large enough that holding the key
- * crosses a bar in a reasonable time. Chosen by using it: below about ten pixels the
- * playhead barely appears to move, and above about thirty a press overshoots the detail
- * an author zoomed in to look at.
+ * crosses a bar in a reasonable time.
+ *
+ * Halved from the sixteen pixels this started at. Sixteen was chosen from how far the
+ * playhead *appeared* to move, and it is a comfortable amount of travel - but the arrow
+ * keys are not primarily how an author travels, they are how an author lands, and at
+ * sixteen pixels a press was repeatedly stepping over the moment being aimed at rather
+ * than onto it. Eight still reads as a movement on screen and takes the playhead close
+ * enough to place a note by ear. Shift is still there for covering ground.
  */
-export const KEYBOARD_STEP_PX = 16;
+export const KEYBOARD_STEP_PX = 8;
 
 /** How much further a coarse step goes. Shift is "same idea, bigger". */
 export const COARSE_STEP_MULTIPLIER = 5;
@@ -29,14 +34,20 @@ export const COARSE_STEP_MULTIPLIER = 5;
 /**
  * Clamps on the converted step.
  *
- * At the maximum zoom of 2000 px/s, sixteen pixels is 8 ms - finer than anything an author
+ * At the maximum zoom of 2000 px/s, eight pixels is 4 ms - finer than anything an author
  * can hear, and slow enough to be useless for getting anywhere. At the minimum of 5 px/s
- * it is 3.2 s, which skips whole phrases. The clamps bound the conversion rather than
- * replacing it: between roughly 30 and 800 px/s, where authoring actually happens, the
+ * it is 1.6 s, which skips whole phrases. The clamps bound the conversion rather than
+ * replacing it: between roughly 8 and 1600 px/s, where authoring actually happens, the
  * step is purely the screen distance.
+ *
+ * Halved along with the screen distance, and deliberately so. Had they been left where
+ * they were, a press at the extremes of the zoom range would have kept its old size while
+ * every press in between halved, and the key would have changed its mind about how far it
+ * goes depending on how far the author had zoomed. The rule is one rule: every press,
+ * everywhere, moves half what it used to.
  */
-export const MIN_STEP_SEC = 0.01;
-export const MAX_STEP_SEC = 2;
+export const MIN_STEP_SEC = 0.005;
+export const MAX_STEP_SEC = 1;
 
 /**
  * The step for one arrow press, in seconds.

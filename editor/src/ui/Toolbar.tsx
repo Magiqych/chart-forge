@@ -37,8 +37,35 @@ export interface ToolbarProps {
   readonly onToggleAudition: () => void;
 }
 
-/** Rates a transcriber actually wants: slow enough to hear placement, plus a nudge up. */
-export const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25] as const;
+/**
+ * Rates a transcriber actually wants: slow enough to hear placement, plus a nudge up.
+ *
+ * The two slowest exist for work the middle of the range cannot do. At 0.25x a fill or a
+ * roll stops being one sound and becomes the several it is made of, which is exactly when
+ * an author has to decide how many notes to write. At 0.10x a single hit is long enough
+ * to hear its attack against the beat grid and say whether the note belongs a frame
+ * earlier - the last few milliseconds of a placement, which are the ones that decide
+ * whether a chart feels right.
+ *
+ * Ascending, so the list reads as a scale and the slow end is where the eye starts. The
+ * clock does not care which of these is chosen: chart time is the audio element's own
+ * `currentTime`, and the element applies the rate itself, so a tenth-speed second is a
+ * tenth of a second of music and everything driven by that clock - the playhead, the note
+ * clicks, Follow - is already right.
+ */
+export const PLAYBACK_RATES = [0.1, 0.25, 0.5, 0.75, 1, 1.25] as const;
+
+/**
+ * How a rate is written in the list.
+ *
+ * Two decimals throughout, so the options read as a column of comparable numbers rather
+ * than a ragged mix of `0.1x`, `0.75x` and `1x`. A function rather than an expression
+ * inside the markup because it is the one thing about this control that is worth
+ * pinning down in a test.
+ */
+export function formatPlaybackRate(rate: number): string {
+  return `${rate.toFixed(2)}x`;
+}
 
 export function Toolbar(props: ToolbarProps): React.JSX.Element {
   const {
@@ -111,7 +138,7 @@ export function Toolbar(props: ToolbarProps): React.JSX.Element {
           aria-label="Playback speed"
         >
           {PLAYBACK_RATES.map((rate) => (
-            <option key={rate} value={rate}>{`${rate}x`}</option>
+            <option key={rate} value={rate}>{formatPlaybackRate(rate)}</option>
           ))}
         </select>
       </label>

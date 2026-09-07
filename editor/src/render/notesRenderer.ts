@@ -40,6 +40,27 @@ export interface PlacementPreview {
   readonly direction?: Direction;
 }
 
+/**
+ * A move being dragged out, in seconds and whole lanes.
+ *
+ * Applied to the selected notes for drawing only. The chart itself is untouched until the
+ * pointer comes up, so what is on screen during the drag is the same geometry the
+ * committed notes will have - and nothing has entered the history yet.
+ */
+export interface MoveDelta {
+  readonly seconds: number;
+  readonly lanes: number;
+  /**
+   * Where the magnet has taken the note, or null while the move is free.
+   *
+   * Deliberately part of the move rather than a scene field of its own. The guide only
+   * has a meaning while this drag is happening, and keeping the two in one value means
+   * there is no second piece of state that could survive the drag and leave a line on
+   * screen pointing at nothing.
+   */
+  readonly guideTimeSec: number | null;
+}
+
 export interface NotesScene {
   readonly view: Viewport;
   readonly layout: Layout;
@@ -48,14 +69,7 @@ export interface NotesScene {
   /** The rubber band being dragged out, if any. Never part of any document. */
   readonly marquee: SelectionRect | null;
   readonly preview: PlacementPreview | null;
-  /**
-   * A move being dragged out, in snapped seconds and whole lanes.
-   *
-   * Applied to the selected notes for drawing only. The chart itself is untouched until
-   * the pointer comes up, so what is on screen during the drag is the same geometry the
-   * committed notes will have - and nothing has entered the history yet.
-   */
-  readonly moveDelta: { readonly seconds: number; readonly lanes: number } | null;
+  readonly moveDelta: MoveDelta | null;
   /** A held note whose end is being dragged. Drawing only, like `moveDelta`. */
   readonly resizePreview: { readonly noteId: string; readonly endTimeSec: number } | null;
   readonly playheadSec: number;
@@ -104,6 +118,9 @@ export class NotesRenderer {
       this.drawPreview(scene, row);
     }
     this.drawMarquee(scene);
+    // In front of the notes it is explaining, behind the playhead, which is the one thing
+    // on this canvas that must never be obscured.
+    this.drawSnapGuide(scene);
     this.drawPlayhead(scene);
 
     return { drawnNotes, millis: performance.now() - started };
@@ -455,6 +472,48 @@ export class NotesRenderer {
       Math.max(1, Math.round(width)),
       Math.max(1, Math.round(height)),
     );
+    ctx.setLineDash([]);
+  }
+
+  /**
+   * The dotted line showing what a dragged note has been lined up with.
+   *
+   * Drawn from the snapped time itself, put through the same `timeToX` as every note on
+   * this canvas. That is the whole reason it cannot drift: the guide is not a second
+   * calculation of where the note went, it is the number the note went to. Zooming and
+   * scrolling move both through one conversion, so a line that is on the note at one
+   * zoom is on it at every zoom.
+   *
+   * It spans the lanes rather than the ruler, like the placement guide, so the author can
+   * follow the alignment down through the analysis overlay to the note itself.
+   */
+  private drawSnapGuide(scene: NotesScene): void {
+    const timeSec = scene.moveDelta?.guideTimeSec;
+    if (timeSec === undefined || timeSec === null) return;
+
+    const x = timeToX(timeSec, scene.view);
+    if (x < 0 || x > scene.view.widthPx) return;
+
+    const { ctx } = this;
+    const column = Math.round(x) + 0.5;
+    const top = scene.layout.gridTopPx;
+    const bottom = scene.layout.gridBottomPx;
+
+    // The wash first, solid and wide, then the dashes over it.
+    ctx.strokeStyle = theme.snapGuide.glow;
+    ctx.lineWidth = theme.snapGuide.glowWidth;
+    ctx.beginPath();
+    ctx.moveTo(column, top);
+    ctx.lineTo(column, bottom);
+    ctx.stroke();
+
+    ctx.strokeStyle = theme.snapGuide.stroke;
+    ctx.lineWidth = theme.snapGuide.width;
+    ctx.setLineDash(theme.snapGuide.dash);
+    ctx.beginPath();
+    ctx.moveTo(column, top);
+    ctx.lineTo(column, bottom);
+    ctx.stroke();
     ctx.setLineDash([]);
   }
 

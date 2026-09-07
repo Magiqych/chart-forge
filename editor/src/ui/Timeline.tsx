@@ -32,6 +32,9 @@ import {
 } from "../core/snap";
 import { buildGuideAnchors, type GuideAnchor } from "../core/guideAnchors";
 import {
+  buildMagnetCandidates, magnetSnapDelta, type MagnetHold, type SnapCandidate,
+} from "../core/magnetSnap";
+import {
   clampViewportStart,
   panBySeconds,
   startSecAfterZoom,
@@ -43,6 +46,7 @@ import {
 } from "../core/viewport";
 import {
   NotesRenderer,
+  type MoveDelta,
   type NotesRenderStats,
   type NotesScene,
   type PlacementPreview,
@@ -180,11 +184,43 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
    * than the hundred pointer events it was made of. The offsets are handed to the
    * renderer so the notes are drawn where they are going, from the same geometry they
    * will have once committed.
+   *
+   * The magnet guide is carried inside the same value, so it cannot outlive the drag that
+   * produced it: every path that clears the move clears the line with it.
    */
-  const [moveDelta, setMoveDelta] = useState<{ seconds: number; lanes: number } | null>(null);
-  const moveRef = useRef<
-    { pointerId: number; x: number; y: number; timeSec: number; lane: number; moved: boolean } | null
-  >(null);
+  const [moveDelta, setMoveDelta] = useState<MoveDelta | null>(null);
+  const moveRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    /** Pointer time when the press landed, unsnapped, so the drag tracks the hand. */
+    rawSec: number;
+    lane: number;
+    /**
+     * The dragged note's own edges before the drag, and the earliest time in the moving
+     * set. What the magnet lines up, as opposed to where the pointer is.
+     */
+    baseEdgesSec: readonly number[];
+    earliestMovingSec: number;
+    /**
+     * Everything the note may be lined up with, built once here.
+     *
+     * A real song offers a few thousand candidates, and rebuilding and re-sorting them on
+     * every pointer move is the one thing that would make dragging feel heavy. The chart
+     * cannot change under a drag - the preview never touches it - so the list stays true
+     * for the whole gesture. Empty when the author has snapping switched off, which is
+     * also how the magnet is kept out of the way entirely.
+     */
+    candidates: readonly SnapCandidate[];
+    /**
+     * The candidate currently holding the note, carried from move to move.
+     *
+     * The magnet's whole memory, and it lives here rather than inside the resolver so
+     * that resolver stays pure: it is created by the press and dies with the gesture.
+     */
+    hold: MagnetHold | null;
+    moved: boolean;
+  } | null>(null);
 
   const [resizePreview, setResizePreview] =
     useState<{ noteId: string; endTimeSec: number } | null>(null);
@@ -194,13 +230,15 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
   const [overHandle, setOverHandle] = useState(false);
 
   /**
-   * Drop any gesture in progress when the mode changes.
+   * Abandon whatever gesture is in progress.
    *
-   * The meaning of a drag is fixed when it starts, so a rubber band or a half-drawn note
-   * left over from the other mode would finish under rules nobody chose. Clearing the
-   * transient state is enough: none of it has touched the chart or the history.
+   * Safe to call at any moment, because none of this state has touched the chart or the
+   * history: dropping it loses an edit that was never made rather than one that was. One
+   * function rather than the same eight lines in two places, so a gesture added later
+   * cannot be forgotten by one of them.
    */
-  useEffect(() => {
+  const abandonGesture = useCallback(() => {
+    dragRef.current = null;
     marqueeRef.current = null;
     longRef.current = null;
     moveRef.current = null;
@@ -209,7 +247,35 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     setPreview(null);
     setMoveDelta(null);
     setResizePreview(null);
-  }, [mode]);
+  }, []);
+
+  /**
+   * Drop any gesture in progress when the mode changes.
+   *
+   * The meaning of a drag is fixed when it starts, so a rubber band or a half-drawn note
+   * left over from the other mode would finish under rules nobody chose.
+   */
+  useEffect(() => {
+    abandonGesture();
+  }, [mode, abandonGesture]);
+
+  /**
+   * A gesture whose end this canvas will never see.
+   *
+   * If the window loses focus while the button is down - the author switches application,
+   * or something else takes the foreground - the release happens somewhere else and
+   * neither `pointerup` nor `pointercancel` arrives here. Whatever was in progress would
+   * then stay armed indefinitely: the next press would be intercepted by a rubber band
+   * that ended minutes ago and quietly refuse to move anything, and a magnet guide would
+   * be left painted down the timeline pointing at nothing.
+   *
+   * So losing focus ends the gesture. Element blur does not bubble, so this listener sees
+   * the window's own blur and not a click moving between the toolbar's controls.
+   */
+  useEffect(() => {
+    window.addEventListener("blur", abandonGesture);
+    return () => window.removeEventListener("blur", abandonGesture);
+  }, [abandonGesture]);
 
   const pitchRanges = useMemo<PitchRanges | null>(
     () => (projection ? pitchRangesFor(projection) : null),
@@ -507,19 +573,54 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         });
 
         switch (intent.kind) {
-          case "selectOne":
+          case "selectOne": {
             onSelect(intent.noteId);
+            // `hit` is what `pointerIntent` was told about, so this is the note the author
+            // pressed rather than a second search that could disagree with it.
+            const held = hit?.note;
+            if (!held) return;
+            // Selecting one note has just made it the whole selection, so it is the whole
+            // moving set. A set rather than an id because that is the only line a future
+            // multi-note drag would have to widen - and because the magnet must exclude
+            // every note that moves, or a group would catch on its own members.
+            const moving = new Set([held.id]);
+            const edges = [held.timeSec];
+            if (held.endTimeSec !== undefined && held.endTimeSec > held.timeSec) {
+              edges.push(held.endTimeSec);
+            }
             // Arm a move. Whether this becomes one is decided by whether the pointer
             // actually travels, not by anything about the mode.
             moveRef.current = {
               pointerId: event.pointerId,
               x, y,
-              timeSec: target.timeSec,
+              rawSec: target.rawSec,
               lane: target.lane,
+              baseEdgesSec: edges,
+              earliestMovingSec: held.timeSec,
+              /**
+               * Deliberately not conditioned on the Snap control.
+               *
+               * That control's own tooltip says what it governs: "what a click on the
+               * timeline snaps to". It is about placing a new note. Moving one that is
+               * already written is a different question with different targets, and
+               * tying the two together made the magnet silently dead for any project
+               * saved with snapping off - with no way to find out why, because the Snap
+               * control is only drawn in Edit Mode and this gesture only exists in
+               * Select Mode.
+               *
+               * So the magnet is always live during a drag, and Alt suspends it.
+               */
+              candidates: buildMagnetCandidates({
+                beatGrid: snapGrid,
+                notes: chart.notes,
+                excludeNoteIds: moving,
+              }),
+              hold: null,
               moved: false,
             };
             event.currentTarget.setPointerCapture(event.pointerId);
             return;
+          }
           case "startResize": {
             const note = chart.notes.find((candidate) => candidate.id === intent.noteId);
             if (!note || note.endTimeSec === undefined) return;
@@ -584,7 +685,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     [
       view.startSec, current, chart, layout, onSeek, chartTargetAt, onPlace, onSelect,
       hitTargets, onSelectEvent, mode, noteType, snapMode, onToggleSelected,
-      selectedNoteIds, onSnapped, onSelectRun,
+      selectedNoteIds, onSnapped, onSelectRun, snapGrid,
     ],
   );
 
@@ -624,22 +725,41 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         return;
       }
 
-      // Moving the selection. The delta is worked out in snapped time and whole lanes, so
-      // what is previewed is exactly what will be committed.
+      // Moving the selection. The delta is worked out in seconds and whole lanes, so what
+      // is previewed is exactly what will be committed.
       const moving = moveRef.current;
       if (moving) {
         const row = findRow(layout, "notes");
-        const target = chartTargetAt(x, y);
         const travelled = Math.hypot(x - moving.x, y - moving.y);
         if (!moving.moved && travelled < MOVE_THRESHOLD_PX) return;
 
         const lane = row && chart
           ? (laneAtY(row, chart.laneCount, y) ?? moving.lane)
           : moving.lane;
-        const seconds = (target ? target.timeSec : moving.timeSec) - moving.timeSec;
+        // The magnet works on the note, not on the pointer: it is offered how far the
+        // hand has travelled and answers with how far the note should go, which is what
+        // lets it put an edge *on* something instead of quantising the journey there.
+        const snapped = magnetSnapDelta({
+          candidates: moving.candidates,
+          baseEdgesSec: moving.baseEdgesSec,
+          rawDeltaSec: xToTime(x, current) - moving.rawSec,
+          earliestMovingSec: moving.earliestMovingSec,
+          pixelsPerSecond: current.pixelsPerSecond,
+          // Alt suspends the magnet for as long as it is held, so an author can put a
+          // note just off a beat without reaching for a switch. Read here rather than
+          // latched at the press, so it can be taken and released mid-drag.
+          enabled: !event.altKey,
+          // What the last move was holding, so a captured candidate keeps the note
+          // through small movements instead of letting go at the distance that took it.
+          held: moving.hold,
+        });
         const lanes = lane - moving.lane;
-        moveRef.current = { ...moving, moved: true };
-        setMoveDelta({ seconds, lanes });
+        moveRef.current = { ...moving, hold: snapped.hold, moved: true };
+        setMoveDelta({
+          seconds: snapped.deltaSec,
+          lanes,
+          guideTimeSec: snapped.guideTimeSec,
+        });
         return;
       }
 

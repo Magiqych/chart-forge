@@ -168,6 +168,114 @@ describe("playback rate", () => {
   });
 });
 
+/**
+ * Slow playback, where the note clicks are actually used.
+ *
+ * A tenth-speed pass advances the clock by about 1.7 ms per frame, which is small enough
+ * that the two ways this could break both become likely at once: a frame that reports the
+ * same `currentTime` as the last one, which must not announce a note twice, and notes
+ * closer together than the sampling, which must not be stepped over. Both are checked
+ * against a run of frames rather than a single call, because both are properties of a
+ * sequence.
+ */
+describe("slow playback", () => {
+  /**
+   * A pass over `notes` at `rate`, sampled every frame at 60 Hz.
+   *
+   * `stallEvery` makes one frame in N report the previous time again, which is what a
+   * media clock that updates less often than the display does looks like from here.
+   */
+  const playThrough = (
+    fromSec: number,
+    toSec: number,
+    rate: number,
+    notes: readonly ChartNote[],
+    stallEvery = 0,
+  ): string[] => {
+    const perFrame = rate / 60;
+    let state = resetSchedulerTo(fromSec);
+    let clock = fromSec;
+    const heard: string[] = [];
+    for (let frame = 0; clock < toSec; frame += 1) {
+      if (stallEvery === 0 || frame % stallEvery !== 0) clock += perFrame;
+      const step = advanceScheduler(state, clock, notes);
+      state = step.state;
+      heard.push(...ids(step.fired));
+      if (frame > 200000) throw new Error("clock is not advancing");
+    }
+    return heard;
+  };
+
+  it("announces every note exactly once at 0.10x", () => {
+    const heard = playThrough(0.9, 3.1, 0.1, NOTES);
+    expect(heard).toEqual(ids(NOTES));
+  });
+
+  it("announces every note exactly once at 0.25x", () => {
+    expect(playThrough(0.9, 3.1, 0.25, NOTES)).toEqual(ids(NOTES));
+  });
+
+  it("announces nothing twice when the clock repeats a frame at 0.10x", () => {
+    // Every third frame reports the same time again. A "the playhead is near a note"
+    // test would fire the same note on each of them.
+    expect(playThrough(0.9, 3.1, 0.1, NOTES, 3)).toEqual(ids(NOTES));
+  });
+
+  it("misses nothing when notes are closer together than one frame at 0.10x", () => {
+    // A tenth-speed frame is about 1.7 ms of chart time; these notes are 1 ms apart, so
+    // several fall inside a single step and all of them have to come out of it.
+    const dense = [tap(1.0), tap(1.001), tap(1.002), tap(1.003), tap(1.004)];
+    expect(playThrough(0.995, 1.01, 0.1, dense)).toEqual(ids(dense));
+  });
+
+  it("gives the same notes at 0.10x as at full speed", () => {
+    expect(playThrough(0.9, 3.1, 0.1, NOTES)).toEqual(playThrough(0.9, 3.1, 1, NOTES));
+  });
+
+  it("resumes at 0.10x without replaying what was already heard", () => {
+    const before = playThrough(0.9, 2.05, 0.1, NOTES);
+    expect(before).toEqual(["n-1-0", "n-1.5-0", "n-2-0", "n-2-2", "n-2-4"]);
+    // Pause writes nothing; resume puts the cursor back at the position it stopped at.
+    const after = playThrough(2.05, 3.1, 0.1, NOTES);
+    expect(after).toEqual(["n-2.5-0", "n-3-0"]);
+  });
+
+  it("stays silent over a seek at 0.10x and plays normally on the far side", () => {
+    // At a tenth speed a frame is 1.7 ms, so a jump of a second is unmistakably a seek
+    // however slowly the song is playing - the threshold is in chart time, not frames.
+    let state = resetSchedulerTo(1.2);
+    const jumped = advanceScheduler(state, 2.6, NOTES);
+    state = jumped.state;
+    expect(jumped.seeked).toBe(true);
+    expect(jumped.fired).toEqual([]);
+
+    const next = advanceScheduler(state, 2.6 + 0.1 / 60, NOTES);
+    expect(next.seeked).toBe(false);
+    // Nothing yet - but the cursor is live again, and the 3.0 note arrives on time.
+    expect(next.fired).toEqual([]);
+    expect(playThrough(2.6, 3.1, 0.1, NOTES)).toEqual(["n-3-0"]);
+  });
+
+  it("does not care how the rate changed on the way through", () => {
+    // 1.00x to 0.10x and back: the clock is chart time either way, so switching speed
+    // mid-pass is not an event the scheduler has to know about.
+    let state = resetSchedulerTo(0.9);
+    const heard: string[] = [];
+    for (const rate of [1, 0.1, 1, 0.1]) {
+      const perFrame = rate / 60;
+      const until = state.lastTimeSec === null ? 0 : state.lastTimeSec + 0.55;
+      let clock = state.lastTimeSec ?? 0;
+      while (clock < until) {
+        clock += perFrame;
+        const step = advanceScheduler(state, clock, NOTES);
+        state = step.state;
+        heard.push(...ids(step.fired));
+      }
+    }
+    expect(heard).toEqual(ids(NOTES));
+  });
+});
+
 describe("voiceForNote", () => {
   it("distinguishes the kinds by shape, not by type name", () => {
     expect(voiceForNote(tap(1))).toBe("tap");

@@ -134,6 +134,35 @@ export const theme = {
     laneHighlight: "rgba(77, 143, 240, 0.10)",
   },
 
+  /**
+   * The line drawn while a dragged note is lined up with something.
+   *
+   * Warm and bright, where everything it has to be told apart from is cool: the beat grid
+   * is a dim blue-grey, the placement guide and the rubber band are pale blue. The author
+   * needs to see at a glance that the note has been *taken* by something rather than that
+   * a grid line happens to be there, and hue does that faster than weight.
+   *
+   * Dashed for the same reason, and because a solid bright line at full height reads as
+   * structure - something the document contains - when this is the opposite: it exists
+   * only while the pointer is down and is never written anywhere.
+   */
+  snapGuide: {
+    stroke: "rgba(255, 199, 89, 0.98)",
+    width: 2,
+    dash: [6, 4] as readonly number[],
+    /**
+     * A soft wash laid down under the dashes.
+     *
+     * The dashes alone are the precise statement of where the note went; between them
+     * there is nothing, and against a busy analysis overlay that is easy to miss at a
+     * glance. A few pixels of faint colour behind them makes the line register in
+     * peripheral vision - the author is looking at the note, not hunting for the guide -
+     * without blurring which column of pixels it actually names.
+     */
+    glow: "rgba(255, 199, 89, 0.16)",
+    glowWidth: 7,
+  },
+
   noteLaneBorder: "#202834",
   noteLaneLabel: "#7f8c9e",
 
