@@ -278,6 +278,46 @@
       "name": "chart: a decoration kind this version has never heard of",
       "expect": [],
       "documents": { "chart": "tests/fixtures/valid/chart-decoration-unknown-kind.json" }
+    },
+    {
+      "name": "chart: a text gradient names only one colour",
+      "expect": ["chart/gradient-needs-two-colors"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-gradient-one-color.json" }
+    },
+    {
+      "name": "chart: a glow is stronger than fully lit",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-glow-intensity-out-of-range.json" }
+    },
+    {
+      "name": "chart: a meteor travels a direction this version does not define",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-meteor-unknown-direction.json" }
+    },
+    {
+      "name": "chart: an effect this version does not define",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-effects-unknown-member.json" }
+    },
+    {
+      "name": "chart: sparkles faster than the contract allows",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-sparkle-rate-out-of-range.json" }
+    },
+    {
+      "name": "chart: every visual property a text decoration may say",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-visuals-full.json" }
+    },
+    {
+      "name": "chart: the least a gradient may say",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-gradient-minimal.json" }
+    },
+    {
+      "name": "chart: an effects group that asks for nothing",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-effects-empty.json" }
     }
   ]
 }

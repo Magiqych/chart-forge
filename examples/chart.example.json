@@ -122,13 +122,36 @@
         "opacity": 1,
         "color": "#ffffff",
         "strokeColor": "#000000",
-        "strokeWidth": 0.008
+        "strokeWidth": 0.008,
+        "gradient": {
+          "colors": [
+            "#ff9aa2", "#ffd8a8", "#fff3a8", "#b8f2c9", "#a8e6ff", "#b3c7ff", "#e0b3ff"
+          ],
+          "angleDeg": 0,
+          "cycleSec": 8
+        },
+        "glow": { "color": "#d8f6ff", "radius": 0.02, "intensity": 0.42 }
       },
       "animation": {
         "enter": "scale",
         "enterDurationSec": 0.12,
         "exit": "fade",
         "exitDurationSec": 0.2
+      },
+      "effects": {
+        "shimmer": { "periodSec": 3.4, "durationSec": 0.5, "intensity": 0.45 },
+        "sparkle": {
+          "ratePerSec": 2.6,
+          "colors": ["#ffffff", "#d8f6ff", "#ffe3f2"],
+          "intensity": 0.55
+        },
+        "meteor": {
+          "ratePerSec": 0.45,
+          "direction": "downRight",
+          "color": "#dff4ff",
+          "lengthScale": 0.18,
+          "intensity": 0.4
+        }
       },
       "zIndex": 20
     },

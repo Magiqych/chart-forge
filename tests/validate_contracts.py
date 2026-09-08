@@ -79,6 +79,7 @@ CODES = {
     "chart/duplicate-decoration-id": "two decorations share an id",
     "chart/decoration-end-not-after-start": "a decoration ends at or before it starts",
     "chart/text-decoration-missing-text": "a text decoration has no text to draw",
+    "chart/gradient-needs-two-colors": "a text gradient names fewer than two colour stops",
     "chart/decorations-not-ascending": "decorations are not in ascending start order",
     "chart/bpm-changes-not-ascending": "bpmChanges are not in ascending time order",
     "project/missing-reference": "a referenced document does not exist",
@@ -678,6 +679,19 @@ def check_chart_decorations(document, label, problems):
             problems.add(
                 "chart/text-decoration-missing-text",
                 "{0}: text decoration {1!r} has no text".format(label, decoration_id),
+            )
+
+        # A ramp needs two ends. JSON Schema could say so with `minItems`, which this
+        # validator does not implement, so the rule lives here - beside the other things
+        # the schema cannot state - rather than growing the schema past what the contract
+        # test can enforce.
+        gradient = (decoration.get("style") or {}).get("gradient")
+        if gradient is not None and len(gradient.get("colors") or []) < 2:
+            problems.add(
+                "chart/gradient-needs-two-colors",
+                "{0}: decoration {1!r} has a gradient with fewer than two colours".format(
+                    label, decoration_id
+                ),
             )
 
     starts = [

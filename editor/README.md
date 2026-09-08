@@ -1020,6 +1020,16 @@ Hitsounds follow a note's *moments* rather than its start. A connected slide is 
 every point along it, so every point sounds; a note that finishes in a flick sounds again
 at its end; a plain Long's release stays silent, because releasing is not a hit.
 
+Decoration visual effects: a colour gradient and a glow in `style`, and shimmer, sparkle
+and meteor in a new `effects` group - three scopes that do not overlap, for what a caption
+looks like at rest, how it arrives, and what runs while it is shown. Every effect is a
+pure function of the decoration and a chart time, seeded from the decoration's id, so
+seeking to a moment always draws the same frame, pausing and resuming cannot make
+particles pile up, and slow playback shows the same effect more slowly rather than a
+different one. No particle is ever stored; a document holds the configuration. The
+Inspector offers presets, which write ordinary generic properties and are never recorded
+by name, and `prefers-reduced-motion` holds everything still without touching the chart.
+
 Not implemented, and deliberately so: automatic event-to-note conversion, bulk conversion,
 turning an event's duration into a hold, any mapping from a stem to a lane, dragging a
 batch placement, a general keyboard shortcut

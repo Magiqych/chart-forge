@@ -21,6 +21,16 @@ import {
   displayWindow, isTextDecoration, resolveTextStyle,
   type AnimationKind, type ChartDecoration, type FontFamily, type TextAlign,
 } from "../core/decoration";
+import {
+  DEFAULT_METEOR_COLOR, DEFAULT_METEOR_INTENSITY, DEFAULT_METEOR_RATE,
+  DEFAULT_SHIMMER_INTENSITY, DEFAULT_SHIMMER_PERIOD_SEC,
+  DEFAULT_SPARKLE_INTENSITY, DEFAULT_SPARKLE_RATE,
+  DEFAULT_GLOW_COLOR, DEFAULT_GLOW_INTENSITY, DEFAULT_GLOW_RADIUS,
+  METEOR_DIRECTIONS, type MeteorDirection,
+} from "../core/decorationEffects";
+import {
+  APPEARANCE_PRESETS, matchingPreset, presetById, presetPatch,
+} from "../core/decorationPresets";
 
 export interface DecorationInspectorProps {
   readonly decorations: readonly ChartDecoration[];
@@ -30,6 +40,13 @@ export interface DecorationInspectorProps {
   readonly onPosition: (x: number, y: number) => void;
   readonly onStyle: (patch: Record<string, unknown>) => void;
   readonly onAnimation: (patch: Record<string, unknown>) => void;
+  /** Change what runs while the decoration is shown. */
+  readonly onEffects: (patch: Record<string, unknown>) => void;
+  /** Apply a preset: one command that sets the style and the effects together. */
+  readonly onPreset: (
+    style: Record<string, unknown>,
+    effects: Record<string, unknown>,
+  ) => void;
   readonly onZIndex: (zIndex: number) => void;
   readonly onDelete: () => void;
 }
@@ -69,8 +86,8 @@ export function DecorationInspector(
   props: DecorationInspectorProps,
 ): React.JSX.Element | null {
   const {
-    decorations, onText, onStart, onEnd, onPosition, onStyle, onAnimation, onZIndex,
-    onDelete,
+    decorations, onText, onStart, onEnd, onPosition, onStyle, onAnimation, onEffects,
+    onPreset, onZIndex, onDelete,
   } = props;
 
   if (decorations.length === 0) return null;
@@ -195,6 +212,235 @@ export function DecorationInspector(
           />
         </Field>
         <p className="dec-note">0 to 1 across the playfield. 1 is the judgement line.</p>
+      </details>
+
+      <details className="dec-group" open>
+        <summary>Appearance</summary>
+        <Field label="Preset">
+          <select
+            value={matchingPreset(decoration.style, decoration.effects)?.id ?? "custom"}
+            onChange={(event) => {
+              const preset = presetById(event.target.value);
+              if (!preset) return;
+              const patch = presetPatch(preset);
+              onPreset(patch.style, patch.effects);
+            }}
+          >
+            {/* Only shown once something has been changed by hand: it is a report of
+                where the settings are, not somewhere to navigate to. */}
+            {matchingPreset(decoration.style, decoration.effects) === null && (
+              <option value="custom">Custom</option>
+            )}
+            {APPEARANCE_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id} title={preset.hint}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p className="dec-note">
+          A preset writes ordinary properties and is not stored by name. Adjust anything
+          below and it becomes Custom.
+        </p>
+      </details>
+
+      <details className="dec-group">
+        <summary>Fill and glow</summary>
+        <Field label="Rainbow">
+          <input
+            type="checkbox"
+            checked={decoration.style?.gradient !== undefined}
+            onChange={(event) =>
+              onStyle({
+                gradient: event.target.checked
+                  ? (presetById("rainbow")?.style.gradient ?? undefined)
+                  : undefined,
+              })
+            }
+          />
+        </Field>
+        {decoration.style?.gradient !== undefined && (
+          <Field label="Cycle s">
+            <input
+              type="number"
+              step="0.5"
+              min="0"
+              max="600"
+              value={decoration.style.gradient.cycleSec ?? 0}
+              onChange={(event) => {
+                const value = numberOf(event.target.value);
+                if (value === null) return;
+                const gradient = decoration.style?.gradient;
+                if (!gradient) return;
+                onStyle({ gradient: { ...gradient, cycleSec: value } });
+              }}
+            />
+          </Field>
+        )}
+        <Field label="Glow">
+          <input
+            type="checkbox"
+            checked={decoration.style?.glow !== undefined}
+            onChange={(event) =>
+              onStyle({
+                glow: event.target.checked
+                  ? {
+                      color: DEFAULT_GLOW_COLOR,
+                      radius: DEFAULT_GLOW_RADIUS,
+                      intensity: DEFAULT_GLOW_INTENSITY,
+                    }
+                  : undefined,
+              })
+            }
+          />
+        </Field>
+        {decoration.style?.glow !== undefined && (
+          <>
+            <Field label="Glow colour">
+              <input
+                type="color"
+                value={decoration.style.glow.color ?? DEFAULT_GLOW_COLOR}
+                onChange={(event) => {
+                  const glow = decoration.style?.glow;
+                  if (!glow) return;
+                  onStyle({ glow: { ...glow, color: event.target.value } });
+                }}
+              />
+            </Field>
+            <Field label="Glow %">
+              <input
+                type="number"
+                step="1"
+                min="0"
+                max="100"
+                value={asPercent(decoration.style.glow.intensity ?? DEFAULT_GLOW_INTENSITY)}
+                onChange={(event) => {
+                  const value = numberOf(event.target.value);
+                  const glow = decoration.style?.glow;
+                  if (value === null || !glow) return;
+                  onStyle({ glow: { ...glow, intensity: fromPercent(value) } });
+                }}
+              />
+            </Field>
+          </>
+        )}
+      </details>
+
+      <details className="dec-group">
+        <summary>Effects</summary>
+        <Field label="Shimmer">
+          <input
+            type="checkbox"
+            checked={decoration.effects?.shimmer !== undefined}
+            onChange={(event) =>
+              onEffects({
+                shimmer: event.target.checked
+                  ? { periodSec: DEFAULT_SHIMMER_PERIOD_SEC, intensity: DEFAULT_SHIMMER_INTENSITY }
+                  : undefined,
+              })
+            }
+          />
+        </Field>
+        {decoration.effects?.shimmer !== undefined && (
+          <Field label="Every s">
+            <input
+              type="number"
+              step="0.5"
+              min="0.1"
+              max="600"
+              value={decoration.effects.shimmer.periodSec ?? DEFAULT_SHIMMER_PERIOD_SEC}
+              onChange={(event) => {
+                const value = numberOf(event.target.value);
+                const shimmer = decoration.effects?.shimmer;
+                if (value === null || !shimmer) return;
+                onEffects({ shimmer: { ...shimmer, periodSec: value } });
+              }}
+            />
+          </Field>
+        )}
+        <Field label="Sparkle">
+          <input
+            type="checkbox"
+            checked={decoration.effects?.sparkle !== undefined}
+            onChange={(event) =>
+              onEffects({
+                sparkle: event.target.checked
+                  ? { ratePerSec: DEFAULT_SPARKLE_RATE, intensity: DEFAULT_SPARKLE_INTENSITY }
+                  : undefined,
+              })
+            }
+          />
+        </Field>
+        {decoration.effects?.sparkle !== undefined && (
+          <Field label="Per second">
+            <input
+              type="number"
+              step="0.5"
+              min="0"
+              max="60"
+              value={decoration.effects.sparkle.ratePerSec ?? DEFAULT_SPARKLE_RATE}
+              onChange={(event) => {
+                const value = numberOf(event.target.value);
+                const sparkle = decoration.effects?.sparkle;
+                if (value === null || !sparkle) return;
+                onEffects({ sparkle: { ...sparkle, ratePerSec: value } });
+              }}
+            />
+          </Field>
+        )}
+        <Field label="Meteor">
+          <input
+            type="checkbox"
+            checked={decoration.effects?.meteor !== undefined}
+            onChange={(event) =>
+              onEffects({
+                meteor: event.target.checked
+                  ? {
+                      ratePerSec: DEFAULT_METEOR_RATE,
+                      direction: "downRight" as MeteorDirection,
+                      color: DEFAULT_METEOR_COLOR,
+                      intensity: DEFAULT_METEOR_INTENSITY,
+                    }
+                  : undefined,
+              })
+            }
+          />
+        </Field>
+        {decoration.effects?.meteor !== undefined && (
+          <>
+            <Field label="Per second">
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="20"
+                value={decoration.effects.meteor.ratePerSec ?? DEFAULT_METEOR_RATE}
+                onChange={(event) => {
+                  const value = numberOf(event.target.value);
+                  const meteor = decoration.effects?.meteor;
+                  if (value === null || !meteor) return;
+                  onEffects({ meteor: { ...meteor, ratePerSec: value } });
+                }}
+              />
+            </Field>
+            <Field label="Direction">
+              <select
+                value={decoration.effects.meteor.direction ?? "downRight"}
+                onChange={(event) => {
+                  const meteor = decoration.effects?.meteor;
+                  if (!meteor) return;
+                  onEffects({
+                    meteor: { ...meteor, direction: event.target.value as MeteorDirection },
+                  });
+                }}
+              >
+                {METEOR_DIRECTIONS.map((direction) => (
+                  <option key={direction} value={direction}>{direction}</option>
+                ))}
+              </select>
+            </Field>
+          </>
+        )}
       </details>
 
       <details className="dec-group">

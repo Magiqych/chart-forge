@@ -203,6 +203,7 @@ export function pasteInto(
       ...(decoration.text !== undefined ? { text: decoration.text } : {}),
       ...(decoration.style !== undefined ? { style: decoration.style } : {}),
       ...(decoration.animation !== undefined ? { animation: decoration.animation } : {}),
+      ...(decoration.effects !== undefined ? { effects: decoration.effects } : {}),
       ...(decoration.zIndex !== undefined ? { zIndex: decoration.zIndex } : {}),
     });
     next = placed.state;

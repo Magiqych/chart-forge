@@ -1,0 +1,39 @@
+{
+  "version": "0.1.0",
+  "audio": {
+    "path": "../../../examples/fixtures/example-song.wav",
+    "durationSec": 8.0
+  },
+  "timing": {
+    "offsetSec": 0.0
+  },
+  "playfield": {
+    "laneCount": 5,
+    "profile": "generic"
+  },
+  "notes": [
+    {
+      "id": "n-0001",
+      "type": "tap",
+      "timeSec": 0.0,
+      "lane": 2
+    }
+  ],
+  "decorations": [
+    {
+      "id": "dec-0001",
+      "type": "text",
+      "startTimeSec": 1.0,
+      "position": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "text": "HELLO",
+      "effects": {
+        "sparkle": {
+          "ratePerSec": 900
+        }
+      }
+    }
+  ]
+}

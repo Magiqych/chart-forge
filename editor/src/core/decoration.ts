@@ -22,6 +22,14 @@
  * as arithmetic.
  */
 
+import type {
+  DecorationEffects, TextGlow, TextGradient,
+} from "./decorationEffects";
+
+export type {
+  DecorationEffects, MeteorEffect, ShimmerEffect, SparkleEffect, TextGlow, TextGradient,
+} from "./decorationEffects";
+
 /** Which part of a text `position.x` names. */
 export const TEXT_ALIGNMENTS = ["left", "center", "right"] as const;
 export type TextAlign = (typeof TEXT_ALIGNMENTS)[number];
@@ -70,9 +78,16 @@ export interface DecorationPosition {
 /**
  * How a text decoration is drawn. Every field optional, every field defaulted.
  *
- * `fontSize` and `strokeWidth` are fractions of the playfield's height for the same
- * reason `position` is normalized: a size in pixels would be a different size on every
- * screen, and text that fitted the playfield on one would overflow it on another.
+ * `fontSize`, `strokeWidth` and `glow.radius` are fractions of the playfield's height for
+ * the same reason `position` is normalized: a size in pixels would be a different size on
+ * every screen, and text that fitted the playfield on one would overflow it on another.
+ *
+ * This is the *resting* appearance - what the caption looks like standing still. What it
+ * does while it is on screen lives in `effects`, and how it arrives and leaves lives in
+ * `animation`. A gradient and a glow are here rather than there because they are what the
+ * text *is*: a gradient is its colour and a glow is a property of its edge, in the same
+ * way `strokeColor` is. That a gradient can also drift is a way of drawing a resting
+ * appearance, not a separate event.
  */
 export interface TextDecorationStyle {
   readonly fontFamily?: FontFamily;
@@ -81,9 +96,14 @@ export interface TextDecorationStyle {
   readonly align?: TextAlign;
   readonly rotationDeg?: number;
   readonly opacity?: number;
+  /** A flat fill. Ignored when `gradient` names two or more usable stops. */
   readonly color?: string;
   readonly strokeColor?: string;
   readonly strokeWidth?: number;
+  /** A colour ramp across the text, which may drift. Absent means the flat `color`. */
+  readonly gradient?: TextGradient;
+  /** A soft light outside the text. Absent means none, never "none with defaults". */
+  readonly glow?: TextGlow;
 }
 
 /** How a decoration arrives and leaves. Every field optional, every field defaulted. */
@@ -115,6 +135,17 @@ export interface ChartDecoration {
   readonly text?: string;
   readonly style?: TextDecorationStyle;
   readonly animation?: DecorationAnimation;
+  /**
+   * What runs for the whole time it is shown.
+   *
+   * A third scope beside `style` and `animation`, and the reason it is a third rather
+   * than an extension of either: `style` is the resting appearance and `animation` is
+   * bounded by the entrance and the exit, while a highlight sweeping across the text
+   * every few seconds and a meteor crossing the background are neither. Absent means the
+   * decoration does nothing beyond standing there, which is what every chart written
+   * before this said.
+   */
+  readonly effects?: DecorationEffects;
   readonly zIndex?: number;
   readonly metadata?: Record<string, unknown>;
 }

@@ -270,7 +270,158 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "gradient": {
+          "description": "A colour ramp across the text, replacing the flat 'color'. Optional and additive: a reader that ignores it draws the flat colour, which is a correct if plainer caption.",
+          "$ref": "#/$defs/textGradient"
+        },
+        "glow": {
+          "description": "A soft light outside the text. Absent means none - never 'none with defaults' - so a decoration that says nothing about it is drawn exactly as it was before glows existed.",
+          "$ref": "#/$defs/textGlow"
         }
+      }
+    },
+    "textGradient": {
+      "description": "A colour ramp drawn across a text decoration. Deliberately a list of stops rather than a named palette: 'rainbow' is not a mode the contract has to understand, it is the colours an author chose, and keeping it that way stops any one song's taste from reaching the document. At least two stops are needed for a ramp; fewer is not a gradient and the contract test rejects it.",
+      "type": "object",
+      "required": ["colors"],
+      "additionalProperties": false,
+      "properties": {
+        "colors": {
+          "description": "Two or more stops, spread evenly across the text.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/hexColor" }
+        },
+        "angleDeg": {
+          "description": "Direction of the ramp across the text. 0, the default, runs left to right.",
+          "type": "number",
+          "minimum": -360,
+          "maximum": 360
+        },
+        "cycleSec": {
+          "description": "Seconds for the ramp to travel one full cycle. 0, the default, is a still gradient. Measured in chart time, so it drifts at the same rate however fast the recording is being played.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        }
+      }
+    },
+    "textGlow": {
+      "description": "A soft light outside a text decoration, in the same family as its outline: a property of the edge rather than an event in time.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "description": "Colour of the light. Default '#ffffff'.",
+          "$ref": "#/$defs/hexColor"
+        },
+        "radius": {
+          "description": "How far the light reaches, as a fraction of the playfield's height, like 'fontSize'. Default 0.02.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "intensity": {
+          "description": "How strong it is. Zero is no glow at all. Default 0.5.",
+          "$ref": "#/$defs/normalizedUnit"
+        }
+      }
+    },
+    "shimmerEffect": {
+      "description": "A highlight that travels across the text now and then.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "periodSec": {
+          "description": "Seconds between one sweep beginning and the next. Default 3.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 600
+        },
+        "durationSec": {
+          "description": "How long one sweep takes. Held to no longer than 'periodSec' by the reader, so sweeps cannot overlap. Default 0.45.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 600
+        },
+        "color": {
+          "description": "Colour of the highlight. Default '#ffffff'.",
+          "$ref": "#/$defs/hexColor"
+        },
+        "intensity": {
+          "description": "How strong it is. Default 0.5.",
+          "$ref": "#/$defs/normalizedUnit"
+        }
+      }
+    },
+    "sparkleEffect": {
+      "description": "Small lights that appear briefly around the text. What is stored is the effect, never the individual lights: a reader generates those from the decoration's id, so the same document always draws the same pattern and nothing about it has to be serialised.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ratePerSec": {
+          "description": "How many appear per second, on average. Zero is none. Default 3.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60
+        },
+        "colors": {
+          "description": "Colours to draw them in, chosen from deterministically. Defaults to a white and pale set.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/hexColor" }
+        },
+        "scale": {
+          "description": "Size relative to the default, which is a fraction of the text's own height. Default 1.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 4
+        },
+        "intensity": {
+          "description": "How strong they are. Default 0.6.",
+          "$ref": "#/$defs/normalizedUnit"
+        }
+      }
+    },
+    "meteorEffect": {
+      "description": "A thin streak crossing the playfield behind the text. Stored as a configuration and never as individual streaks, for the same reason as 'sparkleEffect'.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ratePerSec": {
+          "description": "How many cross per second, on average. Small numbers are the point: a meteor is something that happens now and then. Zero is none. Default 0.5.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "direction": {
+          "description": "Which diagonal it travels along. Default 'downRight'.",
+          "type": "string",
+          "enum": ["downRight", "downLeft"]
+        },
+        "color": {
+          "description": "Colour of the streak. Default '#dff4ff'.",
+          "$ref": "#/$defs/hexColor"
+        },
+        "lengthScale": {
+          "description": "Tail length as a fraction of the playfield's diagonal. Default 0.18.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "intensity": {
+          "description": "How strong it is. Meteors are meant to sit behind the text, so low values are usual. Default 0.5.",
+          "$ref": "#/$defs/normalizedUnit"
+        }
+      }
+    },
+    "decorationEffects": {
+      "description": "What a decoration does for the whole time it is shown, as opposed to what it looks like at rest ('style') or how it arrives and leaves ('animation'). A third group rather than an extension of either, because a highlight that sweeps every few seconds and a meteor crossing the background are neither a resting appearance nor a transition. Every member is optional, and an absent member means the decoration does not do that - never 'does it with defaults' - so a chart written before this existed behaves exactly as it did.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shimmer": { "$ref": "#/$defs/shimmerEffect" },
+        "sparkle": { "$ref": "#/$defs/sparkleEffect" },
+        "meteor": { "$ref": "#/$defs/meteorEffect" }
       }
     },
     "decorationAnimation": {
@@ -335,6 +486,10 @@
         "animation": {
           "description": "How it arrives and leaves. Optional and additive: a reader that ignores it shows the decoration for its whole window, and nothing is lost but polish.",
           "$ref": "#/$defs/decorationAnimation"
+        },
+        "effects": {
+          "description": "What runs for the whole time it is shown. Optional and additive: a reader that ignores it draws a still caption, which is a correct reading of the chart.",
+          "$ref": "#/$defs/decorationEffects"
         },
         "zIndex": {
           "description": "Painting order among decorations: higher is drawn later, over lower. Says nothing about notes, which are a different layer entirely. Default 0.",

@@ -705,6 +705,22 @@ export default function App(): React.JSX.Element {
       editSelectedDecoration((id) => (s) => editDecoration(s, id, { animation: patch })),
     [editSelectedDecoration],
   );
+  const handleDecorationEffects = useCallback(
+    (patch: Record<string, unknown>) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { effects: patch })),
+    [editSelectedDecoration],
+  );
+  /**
+   * Apply a preset.
+   *
+   * One command, so choosing a look is one step of undo rather than two - the style and
+   * the effects always change together and there is no useful state in between them.
+   */
+  const handleDecorationPreset = useCallback(
+    (style: Record<string, unknown>, effects: Record<string, unknown>) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { style, effects })),
+    [editSelectedDecoration],
+  );
   const handleDecorationZIndex = useCallback(
     (zIndex: number) =>
       editSelectedDecoration((id) => (s) => editDecoration(s, id, { zIndex })),
@@ -1465,6 +1481,8 @@ export default function App(): React.JSX.Element {
                 onPosition={handleDecorationPosition}
                 onStyle={handleDecorationStyle}
                 onAnimation={handleDecorationAnimation}
+                onEffects={handleDecorationEffects}
+                onPreset={handleDecorationPreset}
                 onZIndex={handleDecorationZIndex}
                 onDelete={handleDeleteSelected}
               />
@@ -1485,6 +1503,7 @@ export default function App(): React.JSX.Element {
               onMoveBy={handleMoveDecorationsBy}
               onPlaceAt={(x, y) => handlePlaceDecoration(playheadSec, { x, y })}
               placing={mode === "edit" && placeTarget === "text"}
+              playing={playing}
             />
           )}
           <Timeline

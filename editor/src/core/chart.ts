@@ -17,8 +17,8 @@
 
 import {
   clampPosition, compareDecorations, MIN_DECORATION_DURATION_SEC,
-  type ChartDecoration, type DecorationAnimation, type DecorationPosition,
-  type TextDecorationStyle,
+  type ChartDecoration, type DecorationAnimation, type DecorationEffects,
+  type DecorationPosition, type TextDecorationStyle,
 } from "./decoration";
 
 /** The lane a note sits in: 0-based from the left, below `playfield.laneCount`. */
@@ -563,6 +563,9 @@ function readDecorations(raw: unknown): readonly ChartDecoration[] {
       ...(isPlainObject(entry["animation"])
         ? { animation: entry["animation"] as DecorationAnimation }
         : {}),
+      ...(isPlainObject(entry["effects"])
+        ? { effects: entry["effects"] as DecorationEffects }
+        : {}),
       ...(typeof entry["zIndex"] === "number" ? { zIndex: entry["zIndex"] } : {}),
       ...(isPlainObject(entry["metadata"]) ? { metadata: entry["metadata"] } : {}),
     } satisfies ChartDecoration;
@@ -735,6 +738,9 @@ export function serializeChart(state: ChartState): Record<string, unknown> {
       if (decoration.style !== undefined) written["style"] = { ...decoration.style };
       if (decoration.animation !== undefined) {
         written["animation"] = { ...decoration.animation };
+      }
+      if (decoration.effects !== undefined) {
+        written["effects"] = { ...decoration.effects };
       }
       if (decoration.zIndex !== undefined) written["zIndex"] = decoration.zIndex;
       if (decoration.metadata !== undefined) written["metadata"] = decoration.metadata;
@@ -1082,6 +1088,7 @@ export interface PlaceDecorationSpec {
   readonly text?: string;
   readonly style?: TextDecorationStyle;
   readonly animation?: DecorationAnimation;
+  readonly effects?: DecorationEffects;
   readonly zIndex?: number;
 }
 
@@ -1118,6 +1125,7 @@ export function placeDecoration(
     ...(spec.text !== undefined ? { text: spec.text } : {}),
     ...(spec.style !== undefined ? { style: spec.style } : {}),
     ...(spec.animation !== undefined ? { animation: spec.animation } : {}),
+    ...(spec.effects !== undefined ? { effects: spec.effects } : {}),
     ...(spec.zIndex !== undefined ? { zIndex: spec.zIndex } : {}),
   };
 
@@ -1167,6 +1175,7 @@ export interface DecorationPatch {
   readonly position?: DecorationPosition;
   readonly style?: Clearable<TextDecorationStyle>;
   readonly animation?: Clearable<DecorationAnimation>;
+  readonly effects?: Clearable<DecorationEffects>;
   readonly zIndex?: number | undefined;
 }
 
@@ -1211,13 +1220,16 @@ export function updateDecoration(
   };
   const style = mergeOptional(decoration.style, patch.style);
   const animation = mergeOptional(decoration.animation, patch.animation);
+  const effects = mergeOptional(decoration.effects, patch.effects);
 
   const rebuilt: Record<string, unknown> = { ...next };
   delete rebuilt["style"];
   delete rebuilt["animation"];
+  delete rebuilt["effects"];
   delete rebuilt["zIndex"];
   if (style !== undefined) rebuilt["style"] = style;
   if (animation !== undefined) rebuilt["animation"] = animation;
+  if (effects !== undefined) rebuilt["effects"] = effects;
   const zIndex = "zIndex" in patch ? patch.zIndex : decoration.zIndex;
   if (zIndex !== undefined) rebuilt["zIndex"] = zIndex;
 

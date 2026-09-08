@@ -1,0 +1,84 @@
+{
+  "version": "0.1.0",
+  "audio": {
+    "path": "../../../examples/fixtures/example-song.wav",
+    "durationSec": 8.0
+  },
+  "timing": {
+    "offsetSec": 0.0
+  },
+  "playfield": {
+    "laneCount": 5,
+    "profile": "generic"
+  },
+  "notes": [
+    {
+      "id": "n-0001",
+      "type": "tap",
+      "timeSec": 0.0,
+      "lane": 2
+    }
+  ],
+  "decorations": [
+    {
+      "id": "dec-0001",
+      "type": "text",
+      "startTimeSec": 1.0,
+      "position": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "text": "キラメキ☆",
+      "endTimeSec": 4.0,
+      "style": {
+        "fontSize": 0.12,
+        "fontWeight": 700,
+        "strokeColor": "#101426",
+        "strokeWidth": 0.006,
+        "gradient": {
+          "colors": [
+            "#ff9aa2",
+            "#ffd8a8",
+            "#fff3a8",
+            "#b8f2c9",
+            "#a8e6ff",
+            "#b3c7ff",
+            "#e0b3ff"
+          ],
+          "angleDeg": 0,
+          "cycleSec": 8
+        },
+        "glow": {
+          "color": "#d8f6ff",
+          "radius": 0.02,
+          "intensity": 0.45
+        }
+      },
+      "effects": {
+        "shimmer": {
+          "periodSec": 3.4,
+          "durationSec": 0.5,
+          "color": "#ffffff",
+          "intensity": 0.45
+        },
+        "sparkle": {
+          "ratePerSec": 2.6,
+          "colors": [
+            "#ffffff",
+            "#d8f6ff",
+            "#ffe3f2"
+          ],
+          "scale": 1,
+          "intensity": 0.55
+        },
+        "meteor": {
+          "ratePerSec": 0.45,
+          "direction": "downRight",
+          "color": "#dff4ff",
+          "lengthScale": 0.18,
+          "intensity": 0.4
+        }
+      }
+    }
+  ]
+}

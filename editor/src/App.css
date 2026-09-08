@@ -163,6 +163,25 @@ body {
 
 .stage-canvas { display: block; touch-action: none; }
 
+/* Runs the effects while the recording is paused, without moving the playhead. Tucked
+   into a corner of the stage: it is a way of looking, not a transport control. */
+.stage-panel { position: relative; }
+.stage-preview {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 6px;
+  color: var(--muted);
+  background: rgba(14, 18, 24, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.stage-preview:hover { color: var(--text); }
+.stage-preview.on { color: #0e1218; background: var(--accent); border-color: var(--accent); }
+
 /* The decoration inspector. Grouped rather than a flat column of sixteen inputs: the
    sidebar is 180px wide, and everything below has to fit that without wrapping. */
 .dec-group { border-top: 1px solid var(--border); padding: 4px 0; }

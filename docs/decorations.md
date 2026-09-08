@@ -163,6 +163,139 @@ worth making with real charts in hand.
 If the two durations together exceed the display window, both are scaled down by the same
 factor so they meet exactly in the middle and their proportion survives.
 
+## Visual effects
+
+Three scopes, and they do not overlap:
+
+| | Answers | Fields |
+| --- | --- | --- |
+| `style` | what it looks like standing still | colour or `gradient`, stroke, `glow` |
+| `animation` | how it arrives and leaves | `enter`, `exit` |
+| `effects` | what runs while it is shown | `shimmer`, `sparkle`, `meteor` |
+
+`gradient` and `glow` are in `style` because they are what the text *is* — a gradient is
+its colour and a glow is a property of its edge, exactly as `strokeColor` is. That a
+gradient can also drift is a way of drawing a resting appearance, not a separate event.
+`shimmer`, `sparkle` and `meteor` are none of those things: they run for the whole display
+window, so they are neither a resting appearance nor a transition, and they got a group of
+their own rather than being forced into one that already meant something else.
+
+Every one of them is optional, and **absent means "not doing that"** — never "doing it with
+defaults". A chart written before any of this behaves exactly as it did.
+
+### Gradient
+
+```json
+"gradient": { "colors": ["#ff9aa2", "#ffd8a8", "#a8e6ff"], "angleDeg": 0, "cycleSec": 8 }
+```
+
+Deliberately a list of stops rather than a named palette: "rainbow" is not a mode the
+contract has to understand, it is the colours an author chose. At least two stops are
+required — fewer is not a ramp, and the contract test rejects it. `cycleSec` is how long
+the ramp takes to travel one full cycle; `0`, the default, is a still gradient. It is
+measured in **chart time**, so it drifts at the same musical rate however fast the
+recording is being played.
+
+### Glow
+
+```json
+"glow": { "color": "#d8f6ff", "radius": 0.02, "intensity": 0.42 }
+```
+
+`radius` is a fraction of the playfield's height, like `fontSize`. Drawn as its own pass
+before the fill, so the blur never lands on the letters: the text stays exactly as crisp
+as it was, and the stroke is unaffected.
+
+### Shimmer, sparkle, meteor
+
+```json
+"effects": {
+  "shimmer": { "periodSec": 3.4, "durationSec": 0.5, "intensity": 0.45 },
+  "sparkle": { "ratePerSec": 2.6, "colors": ["#ffffff", "#d8f6ff"], "intensity": 0.55 },
+  "meteor":  { "ratePerSec": 0.45, "direction": "downRight", "intensity": 0.4 }
+}
+```
+
+A shimmer is a highlight travelling left to right across the letters. Sparkles are small
+four-pointed lights appearing briefly around the text. A meteor is a thin streak crossing
+the playfield behind everything, clipped to the playfield so it can enter from off the
+edge.
+
+**No individual particle is ever stored.** What a document holds is the configuration; the
+particles are generated from it. That is not only a size argument — it is what keeps the
+contract honest about what an author decided.
+
+### Defaults
+
+| Field | Default | | Field | Default |
+| --- | --- | --- | --- | --- |
+| `gradient.angleDeg` | `0` | | `sparkle.ratePerSec` | `3` |
+| `gradient.cycleSec` | `0` (still) | | `sparkle.scale` | `1` |
+| `glow.color` | `#ffffff` | | `sparkle.intensity` | `0.6` |
+| `glow.radius` | `0.02` | | `meteor.ratePerSec` | `0.5` |
+| `glow.intensity` | `0.5` | | `meteor.direction` | `downRight` |
+| `shimmer.periodSec` | `3` | | `meteor.color` | `#dff4ff` |
+| `shimmer.durationSec` | `0.45` | | `meteor.lengthScale` | `0.18` |
+| `shimmer.intensity` | `0.5` | | `meteor.intensity` | `0.5` |
+
+As everywhere else in a decoration, defaults are applied at the moment of drawing and
+never written into the document.
+
+### Deterministic by construction
+
+Everything above is a **pure function of the decoration and a chart time**:
+
+```ts
+const state = effectStateAt(decoration, chartTimeSec);
+```
+
+There is no accumulation between frames and no `Math.random` anywhere. Each particle's
+seed comes from the decoration's own `id`, and the *n*th event of a stream happens at a
+time that depends on nothing but that seed and *n*. So:
+
+- seeking to a moment shows what that moment looks like, every time — reaching 5.0 s by
+  jumping, by playing forwards, or by coming back from 12 s gives the identical frame;
+- a screenshot of a paused editor is reproducible;
+- pausing and resuming cannot make particles jump or pile up;
+- playing at a tenth speed shows the same effect a tenth as fast, not a different one;
+- two decorations never share a pattern, and a copy — which gets a new id — gets its own;
+- a Player written later can draw any frame from the document alone, without having
+  replayed everything before it.
+
+Time is measured from the decoration's own `startTimeSec`, so dragging a caption along the
+timeline carries its pattern with it rather than re-rolling it.
+
+### Reduced motion
+
+When the machine asks for `prefers-reduced-motion: reduce`, everything that moves stops:
+the gradient holds at phase zero, and there are no shimmers, sparkles or meteors. The
+**resting appearance survives** — a gradient still colours the text and a glow still glows
+— because those are what the caption is rather than something happening to it.
+
+The chart is never touched. This is a property of the machine doing the drawing, and
+turning the setting off restores the full appearance.
+
+### Presets
+
+The Editor offers Plain, Rainbow, Glow, Sparkle and Kirameki. A preset is a **UI
+convenience and nothing else**: choosing one writes ordinary generic properties, and the
+name is never stored. Kirameki, for instance, expands to a drifting pastel rainbow, a faint
+glow, an occasional shimmer, sparse sparkles and the odd meteor — every one of them turned
+down. The panel works out which preset is in effect by comparing the properties, and says
+Custom the moment an author changes anything.
+
+So no chart mentions a song, no Player has to know what a preset meant, and presets can be
+retuned or dropped without touching a single file.
+
+### For a future Player
+
+A Player needs `effectStateAt` and a canvas, and nothing else — no history, no scheduler
+and no state that has to be kept in step. The units are all resolution-independent
+(`fontSize`, `glow.radius` and `meteor.lengthScale` are fractions of the playfield;
+positions are normalized), so the same document draws correctly at any size. Anything it
+does not implement it can skip: an unknown `meteor.direction` falls back to a known one,
+and a decoration with no `effects` is a still caption.
+
 ## Painting order
 
 `zIndex` orders decorations **against each other and nothing else**. Higher is drawn

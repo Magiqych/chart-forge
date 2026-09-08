@@ -18,6 +18,7 @@
 import type { ChartNote, ChartState, Direction } from "../core/chart";
 import { findRow, laneBand, type Layout } from "../core/lanes";
 import { isTextDecoration, type ChartDecoration } from "../core/decoration";
+import { hasVisualEffects } from "../core/decorationEffects";
 import {
   decorationRowGeometry, type DecorationRowGeometry,
 } from "../core/decorationGeometry";
@@ -235,6 +236,22 @@ export class NotesRenderer {
       }
     }
 
+    // A single glyph saying "this one has effects". The row is for editing time, so it
+    // says that they exist and nothing about what they are - drawing particles here would
+    // cost a frame budget to tell an author something the stage already shows them.
+    const decorated = hasVisualEffects(decoration);
+    if (decorated && width >= 14) {
+      ctx.save();
+      ctx.fillStyle = selected
+        ? theme.decoration.selectedLabel
+        : theme.decoration.effectMark;
+      ctx.font = theme.decoration.labelFont;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "right";
+      ctx.fillText("✦", geometry.rightPx - 4, (geometry.topPx + geometry.bottomPx) / 2);
+      ctx.restore();
+    }
+
     // What it says, or what kind it is when this Editor cannot say what it says.
     const label = isTextDecoration(decoration)
       ? (decoration.text ?? "")
@@ -243,7 +260,8 @@ export class NotesRenderer {
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(geometry.leftPx + 3, geometry.topPx, width - 6, height);
+    // Leaves room for the effect mark, so a long caption never runs over it.
+    ctx.rect(geometry.leftPx + 3, geometry.topPx, width - (decorated ? 18 : 6), height);
     ctx.clip();
     ctx.fillStyle = selected ? theme.decoration.selectedLabel : theme.decoration.label;
     ctx.font = theme.decoration.labelFont;

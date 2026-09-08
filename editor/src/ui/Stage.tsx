@@ -32,13 +32,64 @@ export interface StageProps {
   /** Make one here, at the playhead. Only offered while the text tool is held. */
   readonly onPlaceAt: (x: number, y: number) => void;
   readonly placing: boolean;
+  /** True while the recording is playing, so the preview knows to stay out of the way. */
+  readonly playing: boolean;
 }
 
 /** How far the pointer must travel before a press becomes a drag rather than a click. */
 const MOVE_THRESHOLD_PX = 3;
 
 export function Stage(props: StageProps): React.JSX.Element {
-  const { decorations, selectedIds, timeSec, onSelect, onMoveBy, onPlaceAt, placing } = props;
+  const {
+    decorations, selectedIds, timeSec, onSelect, onMoveBy, onPlaceAt, placing, playing,
+  } = props;
+
+  /**
+   * Whether the machine has asked for less movement.
+   *
+   * Read from the browser rather than stored anywhere: it is a fact about the person at
+   * the screen, not about the chart, and turning it on must never edit a document. The
+   * listener keeps it current if they change the setting while the Editor is open.
+   */
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    if (!query) return;
+    setReducedMotion(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setReducedMotion(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  /**
+   * Run the effects while the recording is paused.
+   *
+   * Effects are a pure function of chart time, so a paused Editor shows one frozen frame
+   * - which is right, and is also no way to judge whether a shimmer is too fast. This
+   * feeds the renderer a time that walks forward from the playhead while leaving the
+   * playhead exactly where it is: nothing is played, nothing is seeked, and the chart is
+   * not touched. It is a lens over the same clock rather than a second clock, and it
+   * turns itself off the moment real playback starts, which has the real one.
+   */
+  const [previewing, setPreviewing] = useState(false);
+  const [previewSec, setPreviewSec] = useState(0);
+  useEffect(() => {
+    if (!previewing || playing) return;
+    let frame = 0;
+    const startedAt = performance.now();
+    const from = timeSec;
+    const tick = () => {
+      setPreviewSec(from + (performance.now() - startedAt) / 1000);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+    // `timeSec` is read once, when the preview starts: restarting on every playhead
+    // change would make the preview stutter as the effect re-ran.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewing, playing]);
+
+  const shownSec = previewing && !playing ? previewSec : timeSec;
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -111,11 +162,12 @@ export function Stage(props: StageProps): React.JSX.Element {
       heightPx: size.heightPx,
       decorations: shown,
       selectedIds,
-      timeSec,
+      timeSec: shownSec,
       showOutOfWindow: true,
+      reducedMotion,
     });
     framed.current = { stage: result.stage, boxes: result.boxes };
-  }, [decorations, selectedIds, timeSec, size, preview]);
+  }, [decorations, selectedIds, shownSec, size, preview, reducedMotion]);
 
   const localPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -193,6 +245,23 @@ export function Stage(props: StageProps): React.JSX.Element {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       />
+      {!playing && (
+        <button
+          type="button"
+          className={previewing ? "stage-preview on" : "stage-preview"}
+          onClick={() => {
+            setPreviewSec(timeSec);
+            setPreviewing((on) => !on);
+          }}
+          title={
+            reducedMotion
+              ? "Effects are held still because this machine asks for reduced motion"
+              : "Run the effects without moving the playhead"
+          }
+        >
+          {previewing ? "◼ Preview" : "▶ Preview"}
+        </button>
+      )}
     </div>
   );
 }

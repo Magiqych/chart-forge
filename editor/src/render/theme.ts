@@ -161,6 +161,8 @@ export const theme = {
     handle: "#ffffff",
     label: "#cdbcea",
     selectedLabel: "#ffffff",
+    /** The "this one has effects" mark on a timeline bar. */
+    effectMark: "#ffe9a8",
     labelFont: "11px ui-sans-serif, system-ui, sans-serif",
     /** The stage: the playfield the decorations are positioned on. */
     stageBackground: "#0d1018",
