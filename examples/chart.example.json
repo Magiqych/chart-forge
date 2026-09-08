@@ -105,5 +105,40 @@
     { "type": "flick", "fromNoteId": "n-0008", "toNoteId": "n-0009" },
     { "type": "flick", "fromNoteId": "n-0009", "toNoteId": "n-0010" }
   ],
+  "decorations": [
+    {
+      "id": "dec-0001",
+      "type": "text",
+      "startTimeSec": 1.0,
+      "endTimeSec": 2.75,
+      "text": "キラメキ☆",
+      "position": { "x": 0.5, "y": 0.45 },
+      "style": {
+        "fontFamily": "sans-serif",
+        "fontSize": 0.12,
+        "fontWeight": 700,
+        "align": "center",
+        "rotationDeg": 0,
+        "opacity": 1,
+        "color": "#ffffff",
+        "strokeColor": "#000000",
+        "strokeWidth": 0.008
+      },
+      "animation": {
+        "enter": "scale",
+        "enterDurationSec": 0.12,
+        "exit": "fade",
+        "exitDurationSec": 0.2
+      },
+      "zIndex": 20
+    },
+    {
+      "id": "dec-0002",
+      "type": "text",
+      "startTimeSec": 5.0,
+      "text": "READY",
+      "position": { "x": 0.5, "y": 0.4 }
+    }
+  ],
   "extensions": {}
 }

@@ -6,7 +6,7 @@
 
 import type { LaneId } from "./analysis";
 
-export type RowId = "ruler" | "waveform" | LaneId | "notes";
+export type RowId = "ruler" | "waveform" | LaneId | "notes" | "decorations";
 
 export interface Row {
   readonly id: RowId;
@@ -23,6 +23,9 @@ export const DEFAULT_ROWS: readonly Row[] = [
   { id: "bass", label: "Bass", heightPx: 74 },
   { id: "vocals", label: "Vocals", heightPx: 74 },
   { id: "notes", label: "Notes", heightPx: 70 },
+  // Below the notes, because a decoration is drawn over the playfield rather than
+  // in it, and because an author reads the chart first and its presentation second.
+  { id: "decorations", label: "Text", heightPx: 34 },
 ];
 
 export interface LayoutRow extends Row {

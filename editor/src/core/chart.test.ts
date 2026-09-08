@@ -5,7 +5,8 @@ import {
   disconnectSlide, emptyChart, endFlickDirection, flickEndAction, isBoundedPlaceable,
   chainOf, connectRun, connectionsTouching, disconnectRun, isConnected,
   isSlideChain, isSlidePoint, isStandaloneFlick, moveNotes, noteAt, placeNote,
-  projectChart, resizeNote, serializeChart, setEndAction, setFlickDirection, slidePoints,
+  projectChart, resizeNote, serializeChart, setEndAction, setFlickDirection, setNoteStart,
+  slidePoints,
   travelsBetweenLanes, whyNotConnectable, whyNotConnectableRun, type ChartNote,
   ChartError, DEFAULT_LANE_COUNT, DIRECTIONS, FLICK_DIRECTIONS, MIN_HELD_DURATION_SEC,
   PLACEABLE_TYPES,
@@ -681,6 +682,86 @@ describe("resizing a held note", () => {
 
   it("refuses an unknown id", () => {
     expect(() => resizeNote(held(), "n-9999", 9)).toThrow(/n-9999/);
+  });
+});
+
+describe("moving where a held note starts", () => {
+  const held = () =>
+    placeNote(blank(), { timeSec: 5, lane: 1, type: "hold", endTimeSec: 9 }).state;
+
+  it("makes it start later", () => {
+    expect(setNoteStart(held(), "n-0001", 6).notes[0]?.timeSec).toBe(6);
+  });
+
+  it("makes it start earlier", () => {
+    expect(setNoteStart(held(), "n-0001", 2).notes[0]?.timeSec).toBe(2);
+  });
+
+  it("never moves where it ends", () => {
+    for (const start of [2, 6, 8.9] as const) {
+      expect(setNoteStart(held(), "n-0001", start).notes[0]?.endTimeSec).toBe(9);
+    }
+  });
+
+  it("stops at a minimum length rather than collapsing or inverting", () => {
+    for (const start of [9, 12, 1000] as const) {
+      const state = setNoteStart(held(), "n-0001", start);
+      expect(state.notes[0]?.timeSec).toBe(9 - MIN_HELD_DURATION_SEC);
+      expect(state.notes[0]?.endTimeSec as number).toBeGreaterThan(
+        state.notes[0]?.timeSec as number,
+      );
+    }
+  });
+
+  it("stops at the start of the recording", () => {
+    expect(setNoteStart(held(), "n-0001", -4).notes[0]?.timeSec).toBe(0);
+  });
+
+  it("keeps the note's identity and everything else about it", () => {
+    const before = held();
+    const after = setNoteStart(before, "n-0001", 6);
+    expect(after.notes[0]?.id).toBe(before.notes[0]?.id);
+    expect(after.notes[0]?.lane).toBe(before.notes[0]?.lane);
+    expect(after.notes[0]?.type).toBe(before.notes[0]?.type);
+    expect(after.nextIdSeq).toBe(before.nextIdSeq);
+  });
+
+  it("re-sorts, because a chart is ordered by where its notes start", () => {
+    let state = placeNote(blank(), { timeSec: 5, lane: 1, type: "hold", endTimeSec: 9 }).state;
+    state = placeNote(state, { timeSec: 6, lane: 2, type: "tap" }).state;
+    const after = setNoteStart(state, "n-0001", 7);
+    expect(after.notes.map((note) => note.timeSec)).toEqual([6, 7]);
+  });
+
+  it("does not modify the state it was given", () => {
+    const before = held();
+    setNoteStart(before, "n-0001", 6);
+    expect(before.notes[0]?.timeSec).toBe(5);
+  });
+
+  it("returns the same state when the start does not move", () => {
+    const before = held();
+    expect(setNoteStart(before, "n-0001", 5)).toBe(before);
+  });
+
+  it("refuses a note with no end, whose start is simply its time", () => {
+    const tapOnly = placeNote(blank(), { timeSec: 1, lane: 0, type: "tap" }).state;
+    expect(() => setNoteStart(tapOnly, "n-0001", 3)).toThrow(/no start to move/);
+  });
+
+  it("refuses a slide, whose end is a place rather than a length", () => {
+    let state = placeNote(blank(), { timeSec: 1, lane: 0, type: "slide" }).state;
+    state = placeNote(state, { timeSec: 2, lane: 3, type: "slide" }).state;
+    const connected = connectSlide(state, "n-0001", "n-0002");
+    expect(() => setNoteStart(connected, "n-0001", 0.5)).toThrow(/ends in a lane/);
+  });
+
+  it("refuses an unknown id", () => {
+    expect(() => setNoteStart(held(), "n-9999", 6)).toThrow(/n-9999/);
+  });
+
+  it("refuses a time that is not a number", () => {
+    expect(() => setNoteStart(held(), "n-0001", Number.NaN)).toThrow();
   });
 });
 

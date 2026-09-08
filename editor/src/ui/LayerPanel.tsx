@@ -39,6 +39,15 @@ export interface LayerPanelProps {
   readonly onFlickDirection: (direction: FlickDirection) => void;
   /** How many flicks the selected run has, or 0 when the selection is not one. */
   readonly runSize: number;
+  /**
+   * The decoration inspector, when a decoration is selected.
+   *
+   * Passed in as an element rather than built here, because it needs a dozen callbacks
+   * this panel has no other use for. What the panel decides is *where* it goes - beside
+   * the note inspector, in the same column - and that a selection of one kind never
+   * shows the other's panel.
+   */
+  readonly decorationInspector: React.ReactNode;
 }
 
 interface LayerRow {
@@ -57,6 +66,7 @@ const LAYERS: readonly LayerRow[] = [
   { key: "bass", label: "Bass", swatch: theme.lanes.bass },
   { key: "vocals", label: "Vocals", swatch: theme.lanes.vocals },
   { key: "notes", label: "Notes", swatch: "#8899aa", structural: true },
+  { key: "decorations", label: "Text", swatch: theme.decoration.border, structural: true },
 ];
 
 function countFor(projection: AnalysisProjection | null, key: LayerKey): string {
@@ -72,7 +82,7 @@ export function LayerPanel(
   {
     projection, visible, onToggle, selectedEvent, selectedNotes, onDeleteNote,
     canConnect, connectHint, onConnect, onDisconnect, onEndAction, onFlickDirection,
-    runSize,
+    runSize, decorationInspector,
   }: LayerPanelProps,
 ): React.JSX.Element {
   return (
@@ -94,6 +104,8 @@ export function LayerPanel(
           </li>
         ))}
       </ul>
+
+      {decorationInspector}
 
       <NoteInspector
         notes={selectedNotes}

@@ -36,6 +36,14 @@ export interface ChartHistory {
   readonly saved: ChartState | null;
   /** The highest note-id sequence handed out this session. Never rewound. */
   readonly issuedIdSeq: number;
+  /**
+   * The same high-water mark for decoration ids.
+   *
+   * Tracked separately because the two counters are separate, and for the same reason:
+   * a decoration the author undid and one they place afterwards must never share an
+   * identity, whatever the redo branch that was discarded in between had used.
+   */
+  readonly issuedDecorationIdSeq: number;
 }
 
 /**
@@ -55,6 +63,7 @@ export function openHistory(chart: ChartState): ChartHistory {
     future: [],
     saved: chart,
     issuedIdSeq: chart.nextIdSeq,
+    issuedDecorationIdSeq: chart.nextDecorationIdSeq,
   };
 }
 
@@ -79,9 +88,15 @@ export function isChartDirty(history: ChartHistory): boolean {
  * ever issued, rather than reusing one that a discarded redo branch had already used.
  */
 export function baseForCommand(history: ChartHistory): ChartState {
-  const { present, issuedIdSeq } = history;
-  if (present.nextIdSeq >= issuedIdSeq) return present;
-  return { ...present, nextIdSeq: issuedIdSeq };
+  const { present, issuedIdSeq, issuedDecorationIdSeq } = history;
+  const notesBehind = present.nextIdSeq < issuedIdSeq;
+  const decorationsBehind = present.nextDecorationIdSeq < issuedDecorationIdSeq;
+  if (!notesBehind && !decorationsBehind) return present;
+  return {
+    ...present,
+    ...(notesBehind ? { nextIdSeq: issuedIdSeq } : {}),
+    ...(decorationsBehind ? { nextDecorationIdSeq: issuedDecorationIdSeq } : {}),
+  };
 }
 
 /**
@@ -104,6 +119,10 @@ export function record(history: ChartHistory, next: ChartState): ChartHistory {
     future: [],
     saved: history.saved,
     issuedIdSeq: Math.max(history.issuedIdSeq, next.nextIdSeq),
+    issuedDecorationIdSeq: Math.max(
+      history.issuedDecorationIdSeq,
+      next.nextDecorationIdSeq,
+    ),
   };
 }
 

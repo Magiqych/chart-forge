@@ -15,6 +15,12 @@
  * touching anything else.
  */
 
+import {
+  clampPosition, compareDecorations, MIN_DECORATION_DURATION_SEC,
+  type ChartDecoration, type DecorationAnimation, type DecorationPosition,
+  type TextDecorationStyle,
+} from "./decoration";
+
 /** The lane a note sits in: 0-based from the left, below `playfield.laneCount`. */
 export type LaneIndex = number;
 
@@ -55,6 +61,18 @@ export type PlaceableType = (typeof PLACEABLE_TYPES)[number];
 export type EditorMode = "edit" | "select";
 
 export const EDITOR_MODES: readonly EditorMode[] = ["edit", "select"];
+
+/**
+ * What Edit Mode makes.
+ *
+ * The second axis of "what is the pointer for", below the mode and beside the choice of
+ * note kind. A Decoration is not a note kind, so it cannot be a fifth entry in
+ * `PLACEABLE_TYPES`: it goes in a different array of the document, has a different id
+ * prefix and different commands, and putting it in that list would have meant every
+ * reader of a note type learning to skip one value.
+ */
+export const PLACE_TARGETS = ["note", "text"] as const;
+export type PlaceTarget = (typeof PLACE_TARGETS)[number];
 
 /**
  * The directions this Editor authors a Flick in.
@@ -270,9 +288,26 @@ export interface ChartState {
    * nothing to say.
    */
   readonly connections: readonly ChartConnection[];
+  /**
+   * Presentation laid over the playfield, sorted by (startTimeSec, id).
+   *
+   * Beside the notes rather than among them, because a Decoration is not a Note: nothing
+   * here is hit, judged or scored, and a Player that ignores the whole list plays the
+   * same chart. Empty for every chart written before decorations existed, which is why
+   * nothing had to be migrated.
+   */
+  readonly decorations: readonly ChartDecoration[];
   readonly laneCount: number;
   /** Next numeric suffix for a generated note id. */
   readonly nextIdSeq: number;
+  /**
+   * Next numeric suffix for a generated decoration id.
+   *
+   * Counted separately from the notes'. The two live in different arrays and are named
+   * with different prefixes, so sharing one counter would only make the ids in a chart
+   * skip numbers for no reason an author could see.
+   */
+  readonly nextDecorationIdSeq: number;
 }
 
 export class ChartError extends Error {}
@@ -328,6 +363,27 @@ export function formatNoteId(seq: number): string {
   return `n-${String(seq).padStart(4, "0")}`;
 }
 
+const DECORATION_ID_PATTERN = /^dec-(\d+)$/;
+
+function seqAfterDecorations(decorations: readonly ChartDecoration[]): number {
+  let highest = 0;
+  for (const decoration of decorations) {
+    const match = DECORATION_ID_PATTERN.exec(decoration.id);
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return highest + 1;
+}
+
+export function formatDecorationId(seq: number): string {
+  return `dec-${String(seq).padStart(4, "0")}`;
+}
+
+function sortDecorations(
+  decorations: readonly ChartDecoration[],
+): readonly ChartDecoration[] {
+  return [...decorations].sort(compareDecorations);
+}
+
 /** Build the in-memory state for a chart that does not exist yet. */
 export function emptyChart(options: {
   readonly audioPath: string;
@@ -352,7 +408,15 @@ export function emptyChart(options: {
     playfield: { laneCount, profile: "generic" },
     extensions: {},
   };
-  return { base, notes: [], connections: [], laneCount, nextIdSeq: 1 };
+  return {
+    base,
+    notes: [],
+    connections: [],
+    decorations: [],
+    laneCount,
+    nextIdSeq: 1,
+    nextDecorationIdSeq: 1,
+  };
 }
 
 /**
@@ -426,12 +490,84 @@ export function projectChart(raw: unknown): ChartState {
 
   const base: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (key !== "notes" && key !== "connections") base[key] = value;
+    if (key !== "notes" && key !== "connections" && key !== "decorations") {
+      base[key] = value;
+    }
   }
 
   const sorted = sortNotes(notes);
   const connections = readConnections(raw["connections"], sorted);
-  return { base, notes: sorted, connections, laneCount, nextIdSeq: seqAfter(sorted) };
+  const decorations = readDecorations(raw["decorations"]);
+  return {
+    base,
+    notes: sorted,
+    connections,
+    decorations,
+    laneCount,
+    nextIdSeq: seqAfter(sorted),
+    nextDecorationIdSeq: seqAfterDecorations(decorations),
+  };
+}
+
+/**
+ * Read the decorations.
+ *
+ * Strict about the four fields every decoration must have to be drawn or written back,
+ * and deliberately tolerant about the rest. A kind this Editor has never heard of keeps
+ * its `type` and every field it came with, exactly as an unfamiliar note type does: the
+ * vocabulary is open, and a decoration dropped on load would be a decoration silently
+ * deleted on the next save.
+ *
+ * Nothing is repaired. A style out of range is carried through untouched and replaced by
+ * its default at the moment of drawing, so what is on disk stays what the author wrote.
+ */
+function readDecorations(raw: unknown): readonly ChartDecoration[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new ChartError("decorations must be a list");
+
+  const seen = new Set<string>();
+  const decorations = raw.map((entry, index) => {
+    if (!isPlainObject(entry)) {
+      throw new ChartError(`chart.decorations[${index}] is not an object`);
+    }
+    const id = entry["id"];
+    if (typeof id !== "string" || id.length === 0) {
+      throw new ChartError(`chart.decorations[${index}].id must be a non-empty string`);
+    }
+    if (seen.has(id)) throw new ChartError(`chart.decorations contains duplicate id ${id}`);
+    seen.add(id);
+
+    const type = entry["type"];
+    if (typeof type !== "string" || type.length === 0) {
+      throw new ChartError(`decoration ${id} has no type`);
+    }
+    const position = entry["position"];
+    if (!isPlainObject(position)) {
+      throw new ChartError(`decoration ${id} has no position`);
+    }
+    const x = requireFiniteNumber(position["x"], `decoration ${id} position.x`);
+    const y = requireFiniteNumber(position["y"], `decoration ${id} position.y`);
+
+    return {
+      id,
+      type,
+      startTimeSec: requireFiniteNumber(entry["startTimeSec"], `decoration ${id} startTimeSec`),
+      ...(typeof entry["endTimeSec"] === "number" && Number.isFinite(entry["endTimeSec"])
+        ? { endTimeSec: entry["endTimeSec"] }
+        : {}),
+      position: { x, y },
+      ...(typeof entry["text"] === "string" ? { text: entry["text"] } : {}),
+      ...(isPlainObject(entry["style"])
+        ? { style: entry["style"] as TextDecorationStyle }
+        : {}),
+      ...(isPlainObject(entry["animation"])
+        ? { animation: entry["animation"] as DecorationAnimation }
+        : {}),
+      ...(typeof entry["zIndex"] === "number" ? { zIndex: entry["zIndex"] } : {}),
+      ...(isPlainObject(entry["metadata"]) ? { metadata: entry["metadata"] } : {}),
+    } satisfies ChartDecoration;
+  });
+  return sortDecorations(decorations);
 }
 
 /**
@@ -577,6 +713,33 @@ export function serializeChart(state: ChartState): Record<string, unknown> {
       fromNoteId: connection.fromNoteId,
       toNoteId: connection.toNoteId,
     }));
+  }
+  // The same rule the connections follow: nothing is written when there is nothing to
+  // say, so a chart with no decorations is byte-for-byte what it was before decorations
+  // existed. An empty array would be this Editor announcing a feature in the author's
+  // document, and would change every file it ever opened.
+  if (state.decorations.length > 0) {
+    out["decorations"] = sortDecorations(state.decorations).map((decoration) => {
+      const written: Record<string, unknown> = {
+        id: decoration.id,
+        type: decoration.type,
+        startTimeSec: decoration.startTimeSec,
+      };
+      if (decoration.endTimeSec !== undefined) {
+        written["endTimeSec"] = decoration.endTimeSec;
+      }
+      written["position"] = { x: decoration.position.x, y: decoration.position.y };
+      // Absent fields stay absent. The defaults belong to the reader, so writing them
+      // here would fill an author's chart with values they never chose.
+      if (decoration.text !== undefined) written["text"] = decoration.text;
+      if (decoration.style !== undefined) written["style"] = { ...decoration.style };
+      if (decoration.animation !== undefined) {
+        written["animation"] = { ...decoration.animation };
+      }
+      if (decoration.zIndex !== undefined) written["zIndex"] = decoration.zIndex;
+      if (decoration.metadata !== undefined) written["metadata"] = decoration.metadata;
+      return written;
+    });
   }
   return out;
 }
@@ -730,16 +893,50 @@ export function moveNotes(
   deltaSec: number,
   deltaLane: number,
 ): ChartState {
-  if (ids.length === 0) return state;
+  return moveChartObjects(state, ids, [], deltaSec, deltaLane);
+}
+
+/**
+ * Move notes and decorations together, as one gesture.
+ *
+ * A selection may hold both - an author lining a caption up with the notes it belongs to
+ * is the ordinary case - and dragging it has to move all of it by the same amount or the
+ * two would drift apart, which is the one thing that selection was made to prevent. So
+ * the delta is clamped **once for the whole set**, over the earliest note and the
+ * earliest decoration alike.
+ *
+ * The lane delta reaches the notes only. A decoration has no lane: it sits at a position
+ * on the playfield, which is a different question edited on a different surface, and
+ * quietly turning a vertical drag on the timeline into a change of `position.y` is
+ * exactly the confusion that separation exists to avoid. A drag that moves a mixed
+ * selection across lanes therefore moves the notes across lanes and slides the
+ * decorations along in time, which is what it looks like it is doing.
+ */
+export function moveChartObjects(
+  state: ChartState,
+  noteIds: readonly string[],
+  decorationIds: readonly string[],
+  deltaSec: number,
+  deltaLane: number,
+): ChartState {
+  if (noteIds.length === 0 && decorationIds.length === 0) return state;
   requireFiniteNumber(deltaSec, "move deltaSec");
   if (!Number.isInteger(deltaLane)) throw new ChartError("move deltaLane must be whole");
 
-  const wanted = new Set(ids);
-  const moving = state.notes.filter((note) => wanted.has(note.id));
-  if (moving.length !== wanted.size) {
+  const wantedNotes = new Set(noteIds);
+  const moving = state.notes.filter((note) => wantedNotes.has(note.id));
+  if (moving.length !== wantedNotes.size) {
     const present = new Set(state.notes.map((note) => note.id));
-    const missing = [...wanted].filter((id) => !present.has(id));
+    const missing = [...wantedNotes].filter((id) => !present.has(id));
     throw new ChartError(`no note with id ${missing.join(", ")}`);
+  }
+
+  const wantedDecorations = new Set(decorationIds);
+  const movingDecorations = state.decorations.filter((d) => wantedDecorations.has(d.id));
+  if (movingDecorations.length !== wantedDecorations.size) {
+    const present = new Set(state.decorations.map((d) => d.id));
+    const missing = [...wantedDecorations].filter((id) => !present.has(id));
+    throw new ChartError(`no decoration with id ${missing.join(", ")}`);
   }
 
   // How far the set may actually go before something would fall off an edge.
@@ -753,15 +950,21 @@ export function moveNotes(
       highestLane = Math.max(highestLane, point.lane);
     }
   }
-  const seconds = Math.max(deltaSec, -earliest);
-  const lanes = Math.max(
-    -lowestLane,
-    Math.min(deltaLane, state.laneCount - 1 - highestLane),
-  );
+  for (const decoration of movingDecorations) {
+    earliest = Math.min(earliest, decoration.startTimeSec);
+  }
+
+  const seconds = Number.isFinite(earliest) ? Math.max(deltaSec, -earliest) : deltaSec;
+  // With no note in the selection there is no lane to clamp against, and the lane delta
+  // has nothing to apply to either.
+  const lanes =
+    moving.length === 0
+      ? 0
+      : Math.max(-lowestLane, Math.min(deltaLane, state.laneCount - 1 - highestLane));
   if (seconds === 0 && lanes === 0) return state;
 
   const shifted = state.notes.map((note) => {
-    if (!wanted.has(note.id)) return note;
+    if (!wantedNotes.has(note.id)) return note;
     return {
       ...note,
       timeSec: note.timeSec + seconds,
@@ -778,7 +981,28 @@ export function moveNotes(
         : {}),
     };
   });
-  return { ...state, notes: sortNotes(shifted) };
+
+  // Both edges travel together: dragging a caption moves it, it does not stretch it.
+  // The list is rebuilt only when one of them actually moved, so a drag of notes alone
+  // hands back the very same array - which is what lets everything downstream tell "the
+  // decorations did not change" by identity rather than by comparing them.
+  const slid =
+    movingDecorations.length === 0
+      ? state.decorations
+      : sortDecorations(
+          state.decorations.map((decoration) => {
+            if (!wantedDecorations.has(decoration.id)) return decoration;
+            return {
+              ...decoration,
+              startTimeSec: decoration.startTimeSec + seconds,
+              ...(decoration.endTimeSec !== undefined
+                ? { endTimeSec: decoration.endTimeSec + seconds }
+                : {}),
+            };
+          }),
+        );
+
+  return { ...state, notes: sortNotes(shifted), decorations: slid };
 }
 
 /**
@@ -807,6 +1031,322 @@ export function resizeNote(state: ChartState, id: string, endTimeSec: number): C
       candidate.id === id ? { ...candidate, endTimeSec: wanted } : candidate,
     ),
   };
+}
+
+/**
+ * Change where a held note starts, and nothing else.
+ *
+ * The mirror of `resizeNote`, and the reason it is a command of its own rather than a
+ * flag on that one: the two grips answer opposite questions. Pulling the end changes how
+ * long the player holds; pulling the start changes when they are asked to press. Letting
+ * one function do both would let a caller pass the wrong edge and silently move the
+ * moment of the press, which is the one thing about a Long that a chart is judged on.
+ *
+ * `endTimeSec` is deliberately untouched, so a start drag can never change where the hold
+ * finishes. The new start is held back to `MIN_HELD_DURATION_SEC` before the end rather
+ * than refused, for the same reason `resizeNote` clamps: a grip that stops working at the
+ * limit reads as a broken grip. Nothing else about the note moves - not its id, not its
+ * lane, not its `sourceEventId`, and not any connection it takes part in.
+ */
+export function setNoteStart(state: ChartState, id: string, timeSec: number): ChartState {
+  requireFiniteNumber(timeSec, "note timeSec");
+  const note = state.notes.find((candidate) => candidate.id === id);
+  if (!note) throw new ChartError(`no note with id ${id}`);
+  if (note.endTimeSec === undefined) {
+    throw new ChartError(`note ${id} has no start to move independently`);
+  }
+  if (note.endLane !== undefined) {
+    throw new ChartError(`note ${id} ends in a lane, not at a length`);
+  }
+
+  const wanted = Math.min(Math.max(timeSec, 0), note.endTimeSec - MIN_HELD_DURATION_SEC);
+  if (wanted === note.timeSec) return state;
+  // Re-sorted, because the start is what the chart is ordered by: a note dragged past its
+  // neighbour has to take its new place in the document, not keep its old one.
+  return {
+    ...state,
+    notes: sortNotes(
+      state.notes.map((candidate) =>
+        candidate.id === id ? { ...candidate, timeSec: wanted } : candidate,
+      ),
+    ),
+  };
+}
+
+export interface PlaceDecorationSpec {
+  readonly startTimeSec: number;
+  readonly position: DecorationPosition;
+  /** Only `text` today. Kept explicit so a second kind is a new argument, not a new path. */
+  readonly type?: string;
+  readonly endTimeSec?: number;
+  readonly text?: string;
+  readonly style?: TextDecorationStyle;
+  readonly animation?: DecorationAnimation;
+  readonly zIndex?: number;
+}
+
+/**
+ * Add a decoration.
+ *
+ * The mirror of `placeNote`, and deliberately a separate command rather than a flag on
+ * it: the two produce different things, in different arrays, with differently prefixed
+ * ids, and a caller that could pass either would be a caller that could confuse them.
+ *
+ * Only what the author actually chose is stored. Style and animation are written when
+ * given and omitted when not, so a decoration placed with a click carries five fields
+ * rather than twenty defaults.
+ */
+export function placeDecoration(
+  state: ChartState,
+  spec: PlaceDecorationSpec,
+): { readonly state: ChartState; readonly decoration: ChartDecoration } {
+  requireFiniteNumber(spec.startTimeSec, "decoration startTimeSec");
+  const startTimeSec = Math.max(0, spec.startTimeSec);
+  if (spec.endTimeSec !== undefined) {
+    requireFiniteNumber(spec.endTimeSec, "decoration endTimeSec");
+    if (spec.endTimeSec <= startTimeSec) {
+      throw new ChartError("a decoration must end after it starts");
+    }
+  }
+
+  const decoration: ChartDecoration = {
+    id: formatDecorationId(state.nextDecorationIdSeq),
+    type: spec.type ?? "text",
+    startTimeSec,
+    ...(spec.endTimeSec !== undefined ? { endTimeSec: spec.endTimeSec } : {}),
+    position: clampPosition(spec.position),
+    ...(spec.text !== undefined ? { text: spec.text } : {}),
+    ...(spec.style !== undefined ? { style: spec.style } : {}),
+    ...(spec.animation !== undefined ? { animation: spec.animation } : {}),
+    ...(spec.zIndex !== undefined ? { zIndex: spec.zIndex } : {}),
+  };
+
+  return {
+    state: {
+      ...state,
+      decorations: sortDecorations([...state.decorations, decoration]),
+      nextDecorationIdSeq: state.nextDecorationIdSeq + 1,
+    },
+    decoration,
+  };
+}
+
+/** Remove decorations. Nothing else refers to one, so nothing else has to be repaired. */
+export function deleteDecorations(
+  state: ChartState,
+  ids: readonly string[],
+): ChartState {
+  if (ids.length === 0) return state;
+  const wanted = new Set(ids);
+  const kept = state.decorations.filter((decoration) => !wanted.has(decoration.id));
+  if (kept.length === state.decorations.length) return state;
+  return { ...state, decorations: kept };
+}
+
+/**
+ * What an edit to a decoration may change.
+ *
+ * A field left out is left alone. A field set to `undefined` is *removed*, which is how
+ * the inspector says "back to the default" - and removing it is what keeps a chart free
+ * of values the author never chose, rather than freezing today's defaults into the file.
+ */
+/**
+ * The same fields, but each may be explicitly `undefined` to mean "remove this one".
+ *
+ * The project compiles with `exactOptionalPropertyTypes`, so an optional field and a
+ * field that may hold `undefined` are different types - which is exactly the distinction
+ * needed here. On a stored decoration a missing field means "the reader decides"; in a
+ * patch, passing `undefined` is the author saying "go back to that". Without this the
+ * inspector could set a value but never clear one, and a chart would slowly fill up with
+ * defaults nobody chose.
+ */
+export type Clearable<T> = { readonly [K in keyof T]?: T[K] | undefined };
+
+export interface DecorationPatch {
+  readonly text?: string;
+  readonly position?: DecorationPosition;
+  readonly style?: Clearable<TextDecorationStyle>;
+  readonly animation?: Clearable<DecorationAnimation>;
+  readonly zIndex?: number | undefined;
+}
+
+/** Merge a patch over an optional object, dropping keys whose value is now absent. */
+function mergeOptional<T extends object>(
+  existing: T | undefined,
+  patch: Clearable<T> | undefined,
+): T | undefined {
+  if (patch === undefined) return existing;
+  const merged: Record<string, unknown> = { ...(existing ?? {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
+  }
+  return Object.keys(merged).length === 0 ? undefined : (merged as T);
+}
+
+/**
+ * Change what a decoration says or how it looks.
+ *
+ * One command for every property edit rather than one per field, because they are all the
+ * same shape of change and the inspector edits them the same way. What it deliberately
+ * does *not* touch is the times: those are a drag on the timeline with a magnet attached,
+ * and routing them through here as well would give the Editor two ways to move a
+ * decoration in time that could disagree.
+ *
+ * Returns the same state when nothing actually differs, so an author tabbing through the
+ * inspector without typing does not fill the undo stack.
+ */
+export function updateDecoration(
+  state: ChartState,
+  id: string,
+  patch: DecorationPatch,
+): ChartState {
+  const decoration = state.decorations.find((candidate) => candidate.id === id);
+  if (!decoration) throw new ChartError(`no decoration with id ${id}`);
+
+  const next: ChartDecoration = {
+    ...decoration,
+    ...("text" in patch && patch.text !== undefined ? { text: patch.text } : {}),
+    ...(patch.position !== undefined ? { position: clampPosition(patch.position) } : {}),
+  };
+  const style = mergeOptional(decoration.style, patch.style);
+  const animation = mergeOptional(decoration.animation, patch.animation);
+
+  const rebuilt: Record<string, unknown> = { ...next };
+  delete rebuilt["style"];
+  delete rebuilt["animation"];
+  delete rebuilt["zIndex"];
+  if (style !== undefined) rebuilt["style"] = style;
+  if (animation !== undefined) rebuilt["animation"] = animation;
+  const zIndex = "zIndex" in patch ? patch.zIndex : decoration.zIndex;
+  if (zIndex !== undefined) rebuilt["zIndex"] = zIndex;
+
+  const updated = rebuilt as unknown as ChartDecoration;
+  if (sameDecoration(decoration, updated)) return state;
+  return {
+    ...state,
+    decorations: state.decorations.map((candidate) =>
+      candidate.id === id ? updated : candidate,
+    ),
+  };
+}
+
+/** Whether two decorations say the same thing, so a no-op edit records no history. */
+function sameDecoration(a: ChartDecoration, b: ChartDecoration): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Change where a decoration's window begins, leaving its end where it is.
+ *
+ * The mirror of `setNoteStart`, and separate from it for the same reason the two objects
+ * are separate: a note's start is the instant a player is asked to press, a decoration's
+ * is the instant a caption appears, and one function doing both would be one function
+ * that could move the wrong thing.
+ */
+export function setDecorationStart(
+  state: ChartState,
+  id: string,
+  startTimeSec: number,
+): ChartState {
+  requireFiniteNumber(startTimeSec, "decoration startTimeSec");
+  const decoration = state.decorations.find((candidate) => candidate.id === id);
+  if (!decoration) throw new ChartError(`no decoration with id ${id}`);
+
+  // Only a decoration that states an end has an end to be held back by. One that leaves
+  // it to the reader has a window that simply travels with the start.
+  const ceiling =
+    decoration.endTimeSec !== undefined
+      ? decoration.endTimeSec - MIN_DECORATION_DURATION_SEC
+      : Number.POSITIVE_INFINITY;
+  const wanted = Math.min(Math.max(startTimeSec, 0), ceiling);
+  if (wanted === decoration.startTimeSec) return state;
+  return {
+    ...state,
+    decorations: sortDecorations(
+      state.decorations.map((candidate) =>
+        candidate.id === id ? { ...candidate, startTimeSec: wanted } : candidate,
+      ),
+    ),
+  };
+}
+
+/**
+ * Change where a decoration's window ends, leaving its start where it is.
+ *
+ * Dragging the end of a decoration that had no stated end *gives* it one, which is the
+ * only way an author can pin down a window the reader was previously choosing for them.
+ * It is written because they asked for it by dragging, not because the file was loaded.
+ */
+export function setDecorationEnd(
+  state: ChartState,
+  id: string,
+  endTimeSec: number,
+): ChartState {
+  requireFiniteNumber(endTimeSec, "decoration endTimeSec");
+  const decoration = state.decorations.find((candidate) => candidate.id === id);
+  if (!decoration) throw new ChartError(`no decoration with id ${id}`);
+
+  const wanted = Math.max(
+    endTimeSec,
+    decoration.startTimeSec + MIN_DECORATION_DURATION_SEC,
+  );
+  if (wanted === decoration.endTimeSec) return state;
+  return {
+    ...state,
+    decorations: state.decorations.map((candidate) =>
+      candidate.id === id ? { ...candidate, endTimeSec: wanted } : candidate,
+    ),
+  };
+}
+
+/**
+ * Slide decorations across the playfield.
+ *
+ * A different gesture from moving them in time, on a different surface, so a different
+ * command: the whole point of keeping the two apart is that an author who meant to nudge
+ * a caption sideways never discovers they changed when it appears.
+ *
+ * The delta is applied per decoration and each is clamped on its own, unlike a move in
+ * time. The playfield edge is a wall rather than a boundary a group keeps its shape
+ * against: two captions dragged into the right-hand edge should both end up at the edge,
+ * which is what the author can see happening, rather than stopping the whole group
+ * because one of them arrived first.
+ */
+export function moveDecorationsBy(
+  state: ChartState,
+  ids: readonly string[],
+  deltaX: number,
+  deltaY: number,
+): ChartState {
+  if (ids.length === 0) return state;
+  requireFiniteNumber(deltaX, "decoration deltaX");
+  requireFiniteNumber(deltaY, "decoration deltaY");
+  if (deltaX === 0 && deltaY === 0) return state;
+
+  const wanted = new Set(ids);
+  let changed = false;
+  const moved = state.decorations.map((decoration) => {
+    if (!wanted.has(decoration.id)) return decoration;
+    const position = clampPosition({
+      x: decoration.position.x + deltaX,
+      y: decoration.position.y + deltaY,
+    });
+    if (position.x === decoration.position.x && position.y === decoration.position.y) {
+      return decoration;
+    }
+    changed = true;
+    return { ...decoration, position };
+  });
+  return changed ? { ...state, decorations: moved } : state;
+}
+
+/** The decoration with this id, or null. */
+export function decorationAt(
+  state: ChartState,
+  id: string,
+): ChartDecoration | null {
+  return state.decorations.find((decoration) => decoration.id === id) ?? null;
 }
 
 /**

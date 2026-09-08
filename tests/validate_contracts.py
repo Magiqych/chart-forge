@@ -76,6 +76,10 @@ CODES = {
     "chart/connection-duplicate": "the same two notes are connected twice",
     "chart/connection-branches": "a note is connected onwards, or back to, more than once",
     "chart/notes-not-ascending": "notes are not in ascending time order",
+    "chart/duplicate-decoration-id": "two decorations share an id",
+    "chart/decoration-end-not-after-start": "a decoration ends at or before it starts",
+    "chart/text-decoration-missing-text": "a text decoration has no text to draw",
+    "chart/decorations-not-ascending": "decorations are not in ascending start order",
     "chart/bpm-changes-not-ascending": "bpmChanges are not in ascending time order",
     "project/missing-reference": "a referenced document does not exist",
     "cross/unknown-source-event": "sourceEventId does not resolve to an analysis event",
@@ -634,6 +638,58 @@ def check_slide_waypoints(note, note_id, lane_count, label, problems):
         )
 
 
+def check_chart_decorations(document, label, problems):
+    """The rules a Decoration must obey that JSON Schema cannot state.
+
+    Decorations are presentation, not gameplay, so nothing here reaches into the notes:
+    a decoration names no note, and no rule below needs one. What is checked is that each
+    is identifiable, that it occupies a real stretch of time, that a decoration claiming
+    to be text has something to draw, and that the list is ordered - the same streaming
+    guarantee `notes` gives a Player, for the same reason.
+    """
+    seen = set()
+    for decoration in document.get("decorations", []):
+        decoration_id = decoration["id"]
+        if decoration_id in seen:
+            problems.add(
+                "chart/duplicate-decoration-id",
+                "{0}: decoration id {1!r} appears more than once".format(
+                    label, decoration_id
+                ),
+            )
+        seen.add(decoration_id)
+
+        start = decoration["startTimeSec"]
+        end = decoration.get("endTimeSec")
+        if end is not None and end <= start:
+            # chart.schema.json states endTimeSec "must be greater than startTimeSec":
+            # a decoration shown for no time is not shown.
+            problems.add(
+                "chart/decoration-end-not-after-start",
+                "{0}: decoration {1!r} ends at {2} but starts at {3}".format(
+                    label, decoration_id, end, start
+                ),
+            )
+
+        # `text` is optional on the shared shape because a later decoration kind will not
+        # have one, and required by this kind - the same arrangement `hold` and
+        # `endTimeSec` already have.
+        if decoration["type"] == "text" and decoration.get("text") is None:
+            problems.add(
+                "chart/text-decoration-missing-text",
+                "{0}: text decoration {1!r} has no text".format(label, decoration_id),
+            )
+
+    starts = [
+        decoration["startTimeSec"] for decoration in document.get("decorations", [])
+    ]
+    if not is_ascending(starts):
+        problems.add(
+            "chart/decorations-not-ascending",
+            "{0}: decorations[].startTimeSec is not in ascending order".format(label),
+        )
+
+
 def check_chart(document, label, problems):
     lane_count = document["playfield"]["laneCount"]
 
@@ -688,6 +744,7 @@ def check_chart(document, label, problems):
         check_note_end_action(note, note_id, label, problems)
 
     check_chart_connections(document, label, problems)
+    check_chart_decorations(document, label, problems)
 
     times = [note["timeSec"] for note in document.get("notes", [])]
     if not is_ascending(times):

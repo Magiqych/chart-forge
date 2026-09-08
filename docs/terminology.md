@@ -28,6 +28,21 @@ regenerated from the audio.
 different schemas, and no code converts one into the other. A note may record which
 event inspired it (`sourceEventId`), but that is provenance, not derivation.
 
+### Decoration
+
+Presentation an author lays **over** the playfield: in 0.1, a piece of text shown for a
+stretch of time. "The words KIRAMEKI, centred, from 58.4 to 60.1 seconds."
+
+A Decoration is **not a Note**. It has no lane, nothing about it is judged or scored, and
+a Player that ignores every decoration plays exactly the same chart. It lives in
+`chart.decorations[]`, keeps its own `dec-` ids, and is moved by its own commands. Never
+call one a "Text Note": that name would claim the two are the same kind of object, which
+is the confusion the split exists to prevent.
+
+Its place on the playfield is stated in **normalized coordinates** - x and y from 0 to 1 -
+rather than pixels, because a chart is authored once and drawn at whatever size a player's
+screen happens to be. See `docs/decorations.md`.
+
 ## Documents
 
 | Term | Meaning |

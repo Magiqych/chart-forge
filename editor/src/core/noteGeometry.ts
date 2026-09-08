@@ -62,6 +62,16 @@ export const FLICK_ARROW_PX = 15;
 export const RESIZE_HANDLE_PX = 9;
 
 /**
+ * How wide a held note has to be drawn before it offers a grip at its start as well.
+ *
+ * Three grips' worth, so there is always a middle to take hold of: with a grip at each
+ * end and nothing between them the note could be stretched from either side but never
+ * moved, and moving it is the more common thing to want. Below this the author zooms in,
+ * which is what they would have to do to aim at a grip that small anyway.
+ */
+export const MIN_GRIP_BODY_PX = RESIZE_HANDLE_PX * 3;
+
+/**
  * A note is instantaneous when it has no end time - not when its type happens to be
  * "tap".
  *
@@ -179,7 +189,18 @@ export interface NoteGeometry {
   /** The held body, for a note the player keeps pressed. */
   readonly body: NoteBody | null;
   /** The grip at the end of that body. Only a held note can be resized. */
+  /** The grip on the *end* of a held note. Null for anything without a length. */
   readonly resizeHandle: NoteBox | null;
+  /**
+   * The grip on the *start* of a held note, when there is room for one.
+   *
+   * Withheld on a note drawn narrower than `MIN_GRIP_BODY_PX`, because two grips on a
+   * short bar leave no body between them and a note that cannot be grabbed anywhere but
+   * its edges cannot be moved at all. The end grip is not withheld on the same test: it
+   * has always been there, and taking it away at some zooms would be a change to a
+   * gesture authors already rely on.
+   */
+  readonly startHandle: NoteBox | null;
   /**
    * The travelled path, one segment between each pair of consecutive points.
    *
@@ -200,6 +221,22 @@ export interface NoteGeometry {
 export interface NoteRow {
   readonly topPx: number;
   readonly heightPx: number;
+}
+
+/**
+ * The grip drawn over one end of a held note.
+ *
+ * One function for both ends, so the two are the same target of the same size and an
+ * author's hand learns one thing rather than two. A few pixels taller than the body, so
+ * the grip can be aimed at without having to hit the bar exactly.
+ */
+function gripAt(marker: NoteMarker): NoteBox {
+  return {
+    leftPx: marker.xPx - RESIZE_HANDLE_PX / 2,
+    rightPx: marker.xPx + RESIZE_HANDLE_PX / 2,
+    topPx: marker.centreYPx - BOUNDED_BODY_HEIGHT_PX / 2 - 3,
+    bottomPx: marker.centreYPx + BOUNDED_BODY_HEIGHT_PX / 2 + 3,
+  };
 }
 
 function markerAt(
@@ -252,6 +289,7 @@ export function noteGeometry(
       arrow,
       body: null,
       resizeHandle: null,
+      startHandle: null,
       connectors: [],
       connector: null,
       leftPx: arrow.leftPx,
@@ -278,6 +316,7 @@ export function noteGeometry(
       arrow: null,
       body: null,
       resizeHandle: null,
+      startHandle: null,
       connectors: [],
       connector: null,
       leftPx: first.leftPx,
@@ -302,14 +341,13 @@ export function noteGeometry(
   // Only a held note offers a grip: its end is a length the author can change. A slide's
   // end is a place, and moving it is a different question this Editor does not answer yet.
   const resizeHandle: NoteBox | null =
-    shape === "held"
-      ? {
-          leftPx: last.xPx - RESIZE_HANDLE_PX / 2,
-          rightPx: last.xPx + RESIZE_HANDLE_PX / 2,
-          topPx: last.centreYPx - BOUNDED_BODY_HEIGHT_PX / 2 - 3,
-          bottomPx: last.centreYPx + BOUNDED_BODY_HEIGHT_PX / 2 + 3,
-        }
-      : null;
+    shape === "held" ? gripAt(last) : null;
+
+  // A held note's start is a length the author can change from the other side, and the
+  // two grips are the same object drawn at the two ends. It appears only once the body is
+  // wide enough to leave something between them to take hold of.
+  const startHandle: NoteBox | null =
+    shape === "held" && last.xPx - first.xPx >= MIN_GRIP_BODY_PX ? gripAt(first) : null;
 
   const connectors: NoteConnector[] =
     shape === "travelling"
@@ -341,6 +379,7 @@ export function noteGeometry(
     arrow,
     body,
     resizeHandle,
+    startHandle,
     connectors,
     connector: connectors[0] ?? null,
     leftPx: Math.min(...boxes.map((m) => m.leftPx)),
@@ -374,6 +413,7 @@ export type NotePart =
   | "arrow"
   | "body"
   | "resizeHandle"
+  | "startHandle"
   | "connector";
 
 /** Distance from a point to a box, zero when inside. */
@@ -427,8 +467,14 @@ export function nearestPart(x: number, y: number, geometry: NoteGeometry): PartH
     if (distancePx < best.distancePx) best = { part, distancePx };
   };
 
+  // The end grip first and the start grip second, so a note too short for the two boxes
+  // to be told apart still resizes from the end, exactly as it did before there was a
+  // start grip at all.
   if (geometry.resizeHandle) {
     consider("resizeHandle", distanceToBox(x, y, geometry.resizeHandle));
+  }
+  if (geometry.startHandle) {
+    consider("startHandle", distanceToBox(x, y, geometry.startHandle));
   }
   geometry.markers.forEach((marker, index) => {
     const part: NotePart =

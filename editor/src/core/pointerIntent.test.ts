@@ -109,7 +109,7 @@ describe("the modes never overlap", () => {
     for (const mode of ["edit", "select"] as const) {
       for (const noteType of ["tap", "hold", "slide", "flick"] as const) {
         for (const hitNoteId of [null, "n-0001"]) {
-          for (const hitPart of [null, "marker", "body", "resizeHandle"] as const) {
+          for (const hitPart of [null, "marker", "body", "resizeHandle", "startHandle"] as const) {
             for (const hitSelected of [false, true]) {
               for (const shiftKey of [false, true]) {
                 kinds.add(pointerIntent({
@@ -163,29 +163,40 @@ describe("the modes never overlap", () => {
   });
 });
 
-describe("the resize grip", () => {
+describe("the resize grips", () => {
   const sel = (over: Partial<PointerContext> = {}) =>
     pointerIntent(at({ mode: "select", ...over }));
 
-  it("is taken when a selected note's grip is pressed", () => {
+  it("is taken when a selected note's end grip is pressed", () => {
     expect(sel({ hitNoteId: "n-1", hitPart: "resizeHandle", hitSelected: true }))
-      .toEqual({ kind: "startResize", noteId: "n-1" });
+      .toEqual({ kind: "startResize", noteId: "n-1", edge: "end" });
+  });
+
+  it("says which end was taken, so the two grips cannot be confused", () => {
+    expect(sel({ hitNoteId: "n-1", hitPart: "startHandle", hitSelected: true }))
+      .toEqual({ kind: "startResize", noteId: "n-1", edge: "start" });
   });
 
   it("is not grippable on a note that is not selected", () => {
-    // The grip is only drawn on a selected note, so it must only be grabbable on one.
-    expect(sel({ hitNoteId: "n-1", hitPart: "resizeHandle", hitSelected: false }))
-      .toEqual({ kind: "selectOne", noteId: "n-1" });
+    // The grips are only drawn on a selected note, so they must only be grabbable on one.
+    for (const hitPart of ["resizeHandle", "startHandle"] as const) {
+      expect(sel({ hitNoteId: "n-1", hitPart, hitSelected: false }))
+        .toEqual({ kind: "selectOne", noteId: "n-1" });
+    }
   });
 
   it("gives way to shift, which is still a toggle", () => {
-    expect(sel({ hitNoteId: "n-1", hitPart: "resizeHandle", hitSelected: true, shiftKey: true }))
-      .toEqual({ kind: "toggleSelected", noteId: "n-1" });
+    for (const hitPart of ["resizeHandle", "startHandle"] as const) {
+      expect(sel({ hitNoteId: "n-1", hitPart, hitSelected: true, shiftKey: true }))
+        .toEqual({ kind: "toggleSelected", noteId: "n-1" });
+    }
   });
 
   it("is never taken in Edit Mode", () => {
-    expect(pointerIntent(at({ hitNoteId: "n-1", hitPart: "resizeHandle", hitSelected: true })))
-      .toEqual({ kind: "ignore" });
+    for (const hitPart of ["resizeHandle", "startHandle"] as const) {
+      expect(pointerIntent(at({ hitNoteId: "n-1", hitPart, hitSelected: true })))
+        .toEqual({ kind: "ignore" });
+    }
   });
 
   it("leaves every other part of a selected note selecting it", () => {

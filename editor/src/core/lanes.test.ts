@@ -36,7 +36,8 @@ describe("row layout", () => {
   it("collapses hidden rows rather than leaving a hole", () => {
     const hidden = new Set<RowId>(["drums", "other"]);
     const layout = layoutRows(DEFAULT_ROWS, (id) => !hidden.has(id));
-    expect(layout.rows.map((r) => r.id)).toEqual(["ruler", "waveform", "bass", "vocals", "notes"]);
+    expect(layout.rows.map((r) => r.id))
+      .toEqual(["ruler", "waveform", "bass", "vocals", "notes", "decorations"]);
     for (let i = 1; i < layout.rows.length; i += 1) {
       expect(layout.rows[i]?.topPx).toBe(layout.rows[i - 1]?.bottomPx);
     }

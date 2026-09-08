@@ -1,0 +1,56 @@
+{
+  "version": "0.1.0",
+  "audio": {
+    "path": "../../../examples/fixtures/example-song.wav",
+    "durationSec": 8.0
+  },
+  "timing": {
+    "offsetSec": 0.0
+  },
+  "playfield": {
+    "laneCount": 5,
+    "profile": "generic"
+  },
+  "notes": [
+    {
+      "id": "n-0001",
+      "type": "tap",
+      "timeSec": 0.0,
+      "lane": 2
+    }
+  ],
+  "decorations": [
+    {
+      "id": "dec-0001",
+      "type": "text",
+      "startTimeSec": 1.0,
+      "position": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "text": "キラメキ☆",
+      "endTimeSec": 2.75,
+      "style": {
+        "fontFamily": "serif",
+        "fontSize": 0.12,
+        "fontWeight": 700,
+        "align": "center",
+        "rotationDeg": -12.5,
+        "opacity": 0.9,
+        "color": "#ffcc00",
+        "strokeColor": "#000000",
+        "strokeWidth": 0.008
+      },
+      "animation": {
+        "enter": "scale",
+        "enterDurationSec": 0.12,
+        "exit": "fade",
+        "exitDurationSec": 0.2
+      },
+      "zIndex": 20,
+      "metadata": {
+        "note": "authored by hand"
+      }
+    }
+  ]
+}

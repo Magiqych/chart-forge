@@ -117,6 +117,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/chartConnection" }
     },
+    "decorations": {
+      "description": "Presentation placed over the playfield by the chart's author: text, and in later versions other kinds. A Decoration is not a Note. Nothing here is hit, judged or scored, and a Player that ignores this array plays exactly the same chart - which is why it is optional and additive, like 'connections'. Decorations are independent of one another and of the notes; none refers to a note, so deleting a note can never invalidate one. In ascending 'startTimeSec' order, so a Player can stream them alongside the notes.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/chartDecoration" }
+    },
     "extensions": {
       "description": "Namespace for game-specific data, keyed by profile name (for example an object under the key 'deresute'). The core model above must remain meaningful when every extension is ignored, and a Player that does not understand an extension must still be able to play the chart.",
       "type": "object",
@@ -191,6 +196,156 @@
         "toNoteId": {
           "description": "The later note. Must be strictly after 'fromNoteId' in time, which is what keeps a run a run and makes a loop unrepresentable.",
           "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "normalizedUnit": {
+      "description": "A position along one axis of the playfield, from 0 to 1. Deliberately not pixels: a chart is authored once and drawn at whatever size the Player's screen happens to be, so a pixel would name a different place on every device.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "hexColor": {
+      "description": "An opaque sRGB colour as '#rrggbb'. Opacity is a separate field, so a colour never carries two meanings and a decoration's transparency can be animated without rewriting its colour.",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "decorationPosition": {
+      "description": "Where a decoration sits on the playfield, in normalized coordinates. x runs 0 at the left edge to 1 at the right; y runs 0 at the far edge of the playfield to 1 at the judgement line. Stated in the playfield's own terms rather than the screen's, so a chart does not depend on a resolution, an aspect ratio or a camera.",
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "$ref": "#/$defs/normalizedUnit" },
+        "y": { "$ref": "#/$defs/normalizedUnit" }
+      }
+    },
+    "textDecorationStyle": {
+      "description": "How a text decoration is drawn. Every field is optional and every one has a documented default, so a decoration that says nothing about style still draws. The defaults are not written into the document: materialising them would fill a chart with values the author never chose, and freeze this version's taste into every file.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontFamily": {
+          "description": "Logical font family. Only these three, and no font file is ever embedded or named: a chart must draw the same words on a machine that has never heard of the author's fonts. Default 'sans-serif'.",
+          "type": "string",
+          "enum": ["sans-serif", "serif", "monospace"]
+        },
+        "fontSize": {
+          "description": "Height of the text as a fraction of the playfield's height, so it scales with the playfield exactly as 'position' does. Default 0.06.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "fontWeight": {
+          "description": "CSS numeric weight. Default 400.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 900
+        },
+        "align": {
+          "description": "Which part of the text 'position.x' names. Default 'center'.",
+          "type": "string",
+          "enum": ["left", "center", "right"]
+        },
+        "rotationDeg": {
+          "description": "Clockwise rotation about 'position'. Default 0.",
+          "type": "number",
+          "minimum": -360,
+          "maximum": 360
+        },
+        "opacity": {
+          "description": "Opacity before any animation is applied; an animation scales this rather than replacing it. Default 1.",
+          "$ref": "#/$defs/normalizedUnit"
+        },
+        "color": {
+          "description": "Fill colour. Default '#ffffff'.",
+          "$ref": "#/$defs/hexColor"
+        },
+        "strokeColor": {
+          "description": "Outline colour. Drawn only when 'strokeWidth' is above zero. Default '#000000'.",
+          "$ref": "#/$defs/hexColor"
+        },
+        "strokeWidth": {
+          "description": "Outline width as a fraction of the playfield's height, like 'fontSize'. Zero, the default, means no outline.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "decorationAnimation": {
+      "description": "How a decoration arrives and leaves. A closed vocabulary of the effects this version defines; a reader that meets one it does not implement should draw the decoration without that effect rather than not draw it at all. Both halves are optional and default to 'none' with a zero duration, which is an instant appearance and disappearance.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enter": {
+          "description": "Effect over the first 'enterDurationSec' of the display window.",
+          "type": "string",
+          "enum": ["none", "fade", "scale"]
+        },
+        "enterDurationSec": {
+          "description": "How long the entrance lasts. A length of time rather than a moment, which is why it is not a 'timeSec'.",
+          "type": "number",
+          "minimum": 0
+        },
+        "exit": {
+          "description": "Effect over the last 'exitDurationSec' of the display window.",
+          "type": "string",
+          "enum": ["none", "fade", "scale"]
+        },
+        "exitDurationSec": {
+          "description": "How long the exit lasts.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "chartDecoration": {
+      "description": "One piece of presentation shown over the playfield for a stretch of time. 'type' is an open vocabulary exactly as 'chartNote.type' is - this version defines 'text', and later versions may define others - so the fields a particular kind needs are optional here and required by that kind. A reader that meets a kind it does not know should skip that decoration and play the chart, which it can always do, because no decoration affects gameplay.",
+      "type": "object",
+      "required": ["id", "type", "startTimeSec", "position"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": {
+          "description": "Kind of decoration. Open vocabulary; 'text' draws 'text' in the style given. A reader that meets an unknown one should report it rather than guess.",
+          "type": "string",
+          "examples": ["text"]
+        },
+        "startTimeSec": {
+          "description": "When the decoration begins to be shown. Named for its role rather than reusing a note's 'timeSec': a note's time is the instant it is judged, and nothing here is ever judged.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "endTimeSec": {
+          "description": "When it stops being shown. Must be greater than 'startTimeSec'. Optional: a decoration with no end is shown for a default duration decided by the reader, which lets an author drop a caption in without deciding how long it lingers. A reader must not write its assumption back into the document.",
+          "$ref": "#/$defs/timeSec"
+        },
+        "position": {
+          "description": "Where on the playfield it is drawn.",
+          "$ref": "#/$defs/decorationPosition"
+        },
+        "text": {
+          "description": "The characters to draw. Required for a 'text' decoration. Any Unicode, including an empty string, which is a decoration the author has not written yet rather than an error.",
+          "type": "string"
+        },
+        "style": {
+          "description": "How a 'text' decoration is drawn. Optional and additive throughout; a reader that ignores it draws the text in the documented defaults.",
+          "$ref": "#/$defs/textDecorationStyle"
+        },
+        "animation": {
+          "description": "How it arrives and leaves. Optional and additive: a reader that ignores it shows the decoration for its whole window, and nothing is lost but polish.",
+          "$ref": "#/$defs/decorationAnimation"
+        },
+        "zIndex": {
+          "description": "Painting order among decorations: higher is drawn later, over lower. Says nothing about notes, which are a different layer entirely. Default 0.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "metadata": {
+          "description": "Author or tool specific extra data. A Player must be able to draw the decoration while ignoring this.",
+          "type": "object",
+          "additionalProperties": true
         }
       }
     },

@@ -18,13 +18,18 @@ import type { AnalysisProjection, LaneId, ProjectedEvent } from "./core/analysis
 import {
   chainOf, ChartError, flickEndAction, isBoundedPlaceable, travelsBetweenLanes,
   type ChartNote, type EditorMode, type FlickDirection, type PlaceableType,
+  type PlaceTarget,
 } from "./core/chart";
 import {
   addToSelection, canRedoSession, canUndoSession, changeEndAction, changeFlickDirection,
   chartOf, clearSelection, connect, connectableSelection, disconnect, disconnectableRun,
   disconnectFlickRun, isDirty,
   markChartSaved, markSaved, moveSelected, openSession, place, placeAtEvent, redo,
-  removeSelected, resize, select, selectEvent, selectMany, setSnap, setSnapMode,
+  removeSelected, resize, resizeStart, select, selectEvent, selectMany, setSnap, setSnapMode,
+  addObjectsToSelection, copyFromSession, editDecoration, moveSelectedDecorations,
+  pasteIntoSession, placeDecorationInSession, resizeDecorationEnd, resizeDecorationStart,
+  selectDecoration, selectedDecorations, selectObjects, toggleDecorationSelected,
+  totalSelectionCount,
   soleSelectedId, toggleSelected, undo,
   type EditorSession,
 } from "./core/editorSession";
@@ -35,11 +40,18 @@ import {
  */
 const EMPTY_SELECTION: readonly string[] = [];
 const EMPTY_NOTES: readonly ChartNote[] = [];
+const EMPTY_DECORATIONS: readonly ChartDecoration[] = [];
 import type { RowId } from "./core/lanes";
 import { describeFailure, ProjectLoadError } from "./core/project";
 import {
   buildSnapGrid, DEFAULT_SNAP, type SnapMode, type SnapSettings,
 } from "./core/snap";
+import {
+  DEFAULT_DISPLAY_DURATION_SEC, type ChartDecoration,
+} from "./core/decoration";
+import { EMPTY_CLIPBOARD, clipboardSize, isClipboardEmpty, type Clipboard } from "./core/clipboard";
+import { Stage } from "./ui/Stage";
+import { DecorationInspector } from "./ui/DecorationInspector";
 import {
   centreOnTime, fitToWidth, followStartSec, maxBoundedDuration, revealStartSec,
   startSecAfterZoom, type Viewport,
@@ -59,8 +71,8 @@ import {
 import { loadAudio, type LoadedAudio } from "./audio/player";
 import { createHitSoundEngine, type HitSoundEngine } from "./audio/hitsound";
 import {
-  advanceScheduler, idleScheduler, resetSchedulerTo, voiceForNote,
-  type HitVoice, type SchedulerState,
+  advanceScheduler, buildHitPoints, idleScheduler, resetSchedulerTo,
+  type HitPoint, type HitVoice, type SchedulerState,
 } from "./core/hitScheduler";
 import type { NotesRenderStats } from "./render/notesRenderer";
 import type { RenderStats } from "./render/timelineRenderer";
@@ -79,7 +91,7 @@ function auditionVoice(type: PlaceableType): HitVoice {
 }
 
 const ALL_LAYERS: readonly LayerKey[] = [
-  "grid", "waveform", "drums", "other", "bass", "vocals", "notes",
+  "grid", "waveform", "drums", "other", "bass", "vocals", "notes", "decorations",
 ];
 
 export default function App(): React.JSX.Element {
@@ -124,6 +136,15 @@ export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<EditorMode>("select");
   /** Which kind Edit Mode places. Meaningless in Select Mode, which places nothing. */
   const [noteType, setNoteType] = useState<PlaceableType>("tap");
+  /**
+   * Whether Edit Mode makes a note or a text decoration.
+   *
+   * A second choice below the mode rather than a fifth note kind, because a decoration is
+   * not a note kind: it goes in a different array with different commands, and adding it
+   * to `PLACEABLE_TYPES` would have put a thing with no lane into the list of things that
+   * have one.
+   */
+  const [placeTarget, setPlaceTarget] = useState<PlaceTarget>("note");
   const [direction, setDirection] = useState<FlickDirection>("right");
   /**
    * How the next Long or Slide will finish.
@@ -140,13 +161,29 @@ export default function App(): React.JSX.Element {
   const audioRef = useRef<LoadedAudio | null>(null);
   const hitSoundRef = useRef<HitSoundEngine | null>(null);
   const schedulerRef = useRef<SchedulerState>(idleScheduler());
-  // The chart the scheduler reads. A ref so the playback loop does not have to be torn
-  // down and rebuilt every time a note is placed.
-  const notesRef = useRef<readonly ChartNote[]>([]);
+  /**
+   * The moments the scheduler reads, flattened from the notes.
+   *
+   * A ref so the playback loop does not have to be torn down and rebuilt every time a
+   * note is placed, and *points* rather than notes because a note is not one moment: a
+   * connected slide is judged at every point along it, and scheduling from note starts
+   * alone announced only the first of them.
+   */
+  const hitPointsRef = useRef<readonly HitPoint[]>([]);
   const projection: AnalysisProjection | null = opened?.projection ?? null;
   const chart = session ? chartOf(session) : null;
   const dirty = session ? isDirty(session) : false;
   const selectedNoteIds = session?.selectedNoteIds ?? EMPTY_SELECTION;
+  const selectedDecorationIds = session?.selectedDecorationIds ?? EMPTY_SELECTION;
+  const decorations = chart?.decorations ?? EMPTY_DECORATIONS;
+  /**
+   * The clipboard.
+   *
+   * Held here rather than in the session because copying edits no document, dirties
+   * nothing and must survive an undo - none of which is true of anything the session
+   * holds.
+   */
+  const clipboardRef = useRef<Clipboard>(EMPTY_CLIPBOARD);
   const snap = session?.snap ?? DEFAULT_SNAP;
   const snapMode: SnapMode = session?.snapMode ?? "beat";
   const selectedEventId = session?.selectedEventId ?? null;
@@ -404,9 +441,9 @@ export default function App(): React.JSX.Element {
       try {
         const next = moveSelected(current, deltaSec, deltaLane);
         if (next !== current) {
-          const count = current.selectedNoteIds.length;
+          const count = totalSelectionCount(current);
           setSaveMessage(
-            `Moved ${count} note${count === 1 ? "" : "s"} by ${deltaSec.toFixed(3)}s` +
+            `Moved ${count} object${count === 1 ? "" : "s"} by ${deltaSec.toFixed(3)}s` +
               (deltaLane === 0 ? "" : ` and ${Math.abs(deltaLane)} lane${Math.abs(deltaLane) === 1 ? "" : "s"}`),
           );
         }
@@ -429,6 +466,29 @@ export default function App(): React.JSX.Element {
           if (note?.endTimeSec !== undefined) {
             setSaveMessage(
               `${noteId} now lasts ${(note.endTimeSec - note.timeSec).toFixed(3)}s`,
+            );
+          }
+        }
+        return next;
+      } catch (error) {
+        setSaveMessage(error instanceof ChartError ? error.message : String(error));
+        return current;
+      }
+    });
+  }, []);
+
+  /** Commit a drag on a held note's start grip. Changes the start and nothing else. */
+  const handleResizeStart = useCallback((noteId: string, timeSec: number) => {
+    setSession((current) => {
+      if (!current) return current;
+      try {
+        const next = resizeStart(current, noteId, timeSec);
+        if (next !== current) {
+          const note = chartOf(next).notes.find((candidate) => candidate.id === noteId);
+          if (note?.endTimeSec !== undefined) {
+            setSaveMessage(
+              `${noteId} now starts at ${note.timeSec.toFixed(3)}s ` +
+                `and lasts ${(note.endTimeSec - note.timeSec).toFixed(3)}s`,
             );
           }
         }
@@ -566,6 +626,164 @@ export default function App(): React.JSX.Element {
     setSession((current) => (current ? clearSelection(current) : current));
   }, []);
 
+  /**
+   * Make a text decoration.
+   *
+   * Blank rather than pre-filled with a word, and selected immediately, so the author's
+   * next keystroke goes into the inspector's box rather than into deleting a placeholder.
+   * The default window is written out explicitly - the author asked for a decoration by
+   * clicking, and a stated end is what they can then drag - while a decoration *loaded*
+   * without one keeps its silence.
+   */
+  const handlePlaceDecoration = useCallback(
+    (startTimeSec: number, position?: { x: number; y: number }) => {
+      setSession((current) => {
+        if (!current) return current;
+        try {
+          const next = placeDecorationInSession(current, {
+            startTimeSec,
+            endTimeSec: startTimeSec + DEFAULT_DISPLAY_DURATION_SEC,
+            text: "",
+            position: position ?? { x: 0.5, y: 0.4 },
+          });
+          setSaveMessage(`Added text at ${startTimeSec.toFixed(3)}s`);
+          return next;
+        } catch (error) {
+          setSaveMessage(error instanceof ChartError ? error.message : String(error));
+          return current;
+        }
+      });
+    },
+    [],
+  );
+
+  /** One edit to the selected decoration, whichever property it touched. */
+  const editSelectedDecoration = useCallback(
+    (change: (id: string) => (session: EditorSession) => EditorSession) => {
+      setSession((current) => {
+        if (!current) return current;
+        const id = current.selectedDecorationIds[0];
+        if (id === undefined) return current;
+        try {
+          return change(id)(current);
+        } catch (error) {
+          setSaveMessage(error instanceof ChartError ? error.message : String(error));
+          return current;
+        }
+      });
+    },
+    [],
+  );
+
+  const handleDecorationText = useCallback(
+    (text: string) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { text })),
+    [editSelectedDecoration],
+  );
+  const handleDecorationStart = useCallback(
+    (startTimeSec: number) =>
+      editSelectedDecoration((id) => (s) => resizeDecorationStart(s, id, startTimeSec)),
+    [editSelectedDecoration],
+  );
+  const handleDecorationEnd = useCallback(
+    (endTimeSec: number) =>
+      editSelectedDecoration((id) => (s) => resizeDecorationEnd(s, id, endTimeSec)),
+    [editSelectedDecoration],
+  );
+  const handleDecorationPosition = useCallback(
+    (x: number, y: number) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { position: { x, y } })),
+    [editSelectedDecoration],
+  );
+  const handleDecorationStyle = useCallback(
+    (patch: Record<string, unknown>) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { style: patch })),
+    [editSelectedDecoration],
+  );
+  const handleDecorationAnimation = useCallback(
+    (patch: Record<string, unknown>) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { animation: patch })),
+    [editSelectedDecoration],
+  );
+  const handleDecorationZIndex = useCallback(
+    (zIndex: number) =>
+      editSelectedDecoration((id) => (s) => editDecoration(s, id, { zIndex })),
+    [editSelectedDecoration],
+  );
+
+  const handleSelectDecoration = useCallback((id: string | null) => {
+    setSession((current) => (current ? selectDecoration(current, id) : current));
+  }, []);
+
+  const handleToggleDecorationSelected = useCallback((id: string) => {
+    setSession((current) => (current ? toggleDecorationSelected(current, id) : current));
+  }, []);
+
+  /** What a rubber band across both rows caught. One selection change for the gesture. */
+  const handleSelectObjects = useCallback(
+    (noteIds: readonly string[], decorationIds: readonly string[], add: boolean) => {
+      setSession((current) =>
+        current
+          ? add
+            ? addObjectsToSelection(current, noteIds, decorationIds)
+            : selectObjects(current, noteIds, decorationIds)
+          : current,
+      );
+    },
+    [],
+  );
+
+  /** Commit a drag across the playfield. Time is not touched: this is the other axis. */
+  const handleMoveDecorationsBy = useCallback((deltaX: number, deltaY: number) => {
+    setSession((current) => {
+      if (!current) return current;
+      const next = moveSelectedDecorations(current, deltaX, deltaY);
+      if (next !== current) setSaveMessage("Moved text across the playfield");
+      return next;
+    });
+  }, []);
+
+  const handleResizeDecorationStart = useCallback((id: string, startTimeSec: number) => {
+    setSession((current) => (current ? resizeDecorationStart(current, id, startTimeSec) : current));
+  }, []);
+
+  const handleResizeDecorationEnd = useCallback((id: string, endTimeSec: number) => {
+    setSession((current) => (current ? resizeDecorationEnd(current, id, endTimeSec) : current));
+  }, []);
+
+  /**
+   * Copy and paste.
+   *
+   * The clipboard is a description rather than the objects, so pasting mints fresh ids
+   * and two pastes are two independent copies. A paste lands at the playhead, which is
+   * the one position the author is already looking at.
+   */
+  const handleCopy = useCallback(() => {
+    if (!session) return;
+    const clipboard = copyFromSession(session);
+    if (isClipboardEmpty(clipboard)) return;
+    clipboardRef.current = clipboard;
+    setSaveMessage(`Copied ${clipboardSize(clipboard)} object(s)`);
+  }, [session]);
+
+  const handlePaste = useCallback(() => {
+    const clipboard = clipboardRef.current;
+    if (isClipboardEmpty(clipboard)) return;
+    setSession((current) => {
+      if (!current) return current;
+      try {
+        const next = pasteIntoSession(current, clipboard, playheadSecRef.current);
+        if (next !== current) {
+          setSaveMessage(`Pasted ${clipboardSize(clipboard)} object(s)`);
+        }
+        return next;
+      } catch (error) {
+        setSaveMessage(error instanceof ChartError ? error.message : String(error));
+        return current;
+      }
+    });
+  }, []);
+
   const handleSnap = useCallback((next: SnapSettings) => {
     setSession((current) => (current ? setSnap(current, next) : current));
   }, []);
@@ -632,11 +850,11 @@ export default function App(): React.JSX.Element {
    */
   const handleDeleteSelected = useCallback(() => {
     setSession((current) => {
-      if (!current || current.selectedNoteIds.length === 0) return current;
-      const count = current.selectedNoteIds.length;
+      if (!current || totalSelectionCount(current) === 0) return current;
+      const count = totalSelectionCount(current);
       try {
         const next = removeSelected(current);
-        setSaveMessage(`Deleted ${count} note${count === 1 ? "" : "s"}`);
+        setSaveMessage(`Deleted ${count} object${count === 1 ? "" : "s"}`);
         return next;
       } catch (error) {
         setSaveMessage(error instanceof ChartError ? error.message : String(error));
@@ -697,9 +915,15 @@ export default function App(): React.JSX.Element {
     setMuted((current) => !current);
   }, []);
 
-  /** Keep the notes the playback loop reads current without restarting it. */
+  /**
+   * Keep the moments the playback loop reads current without restarting it.
+   *
+   * Flattened once per edit rather than once per frame: a real chart is a few thousand
+   * points, and rebuilding the list sixty times a second would be the one thing that
+   * made playback cost anything.
+   */
   useEffect(() => {
-    notesRef.current = chart?.notes ?? [];
+    hitPointsRef.current = buildHitPoints(chart?.notes ?? []);
   }, [chart]);
 
   const handlePlayPause = useCallback(() => {
@@ -739,13 +963,14 @@ export default function App(): React.JSX.Element {
         setPlayheadSec(now);
 
         if (hitSoundOn) {
-          const step = advanceScheduler(schedulerRef.current, now, notesRef.current);
+          const step = advanceScheduler(schedulerRef.current, now, hitPointsRef.current);
           schedulerRef.current = step.state;
           if (step.fired.length > 0) {
             const engine = hitSound();
-            // A chord fires every one of its notes: hearing only one lane would
+            // Every moment crossed sounds: a chord is several notes at one instant, and
+            // a slide is several instants of one note. Hearing one of either would
             // misreport the chart.
-            for (const note of step.fired) engine?.play(voiceForNote(note));
+            for (const point of step.fired) engine?.play(point.voice);
           }
         } else {
           // Keep the cursor level with playback so switching the clicks back on does
@@ -929,8 +1154,10 @@ export default function App(): React.JSX.Element {
 
   const selectionCountRef = useRef(0);
   useEffect(() => {
-    selectionCountRef.current = selectedNoteIds.length;
-  }, [selectedNoteIds]);
+    // Everything Delete acts on, notes and decorations alike, so the key claims itself
+    // exactly when there is something for it to remove.
+    selectionCountRef.current = selectedNoteIds.length + selectedDecorationIds.length;
+  }, [selectedNoteIds, selectedDecorationIds]);
 
   const followPlayheadRef = useRef(false);
   useEffect(() => {
@@ -1046,6 +1273,12 @@ export default function App(): React.JSX.Element {
         } else if (key === "y" || (key === "z" && event.shiftKey)) {
           event.preventDefault();
           handleRedo();
+        } else if (key === "c") {
+          event.preventDefault();
+          handleCopy();
+        } else if (key === "v") {
+          event.preventDefault();
+          handlePaste();
         }
         return;
       }
@@ -1099,7 +1332,7 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     handleUndo, handleRedo, handlePlayPause, stepPlayhead, stepEvent,
-    handleDeleteSelected, handleClearSelection,
+    handleDeleteSelected, handleClearSelection, handleCopy, handlePaste,
   ]);
 
   const connectable = useMemo(
@@ -1122,6 +1355,11 @@ export default function App(): React.JSX.Element {
       return note ? [note] : [];
     });
   }, [chart, selectedNoteIds]);
+
+  const selectedDecorationList = useMemo<readonly ChartDecoration[]>(
+    () => (session ? selectedDecorations(session) : EMPTY_DECORATIONS),
+    [session],
+  );
 
   const selectedEvent = useMemo<ProjectedEvent | null>(
     () =>
@@ -1178,6 +1416,8 @@ export default function App(): React.JSX.Element {
         onMode={handleMode}
         noteType={noteType}
         onNoteType={setNoteType}
+        placeTarget={placeTarget}
+        onPlaceTarget={setPlaceTarget}
         direction={direction}
         onDirection={setDirection}
         endFlick={endFlick}
@@ -1192,7 +1432,7 @@ export default function App(): React.JSX.Element {
         onEventLane={setEventLane}
         laneCount={chart?.laneCount ?? 0}
         onPlaceAtEvent={handlePlaceAtEvent}
-        selectionCount={selectedNoteIds.length}
+        selectionCount={selectedNoteIds.length + selectedDecorationIds.length}
         onDeleteSelected={handleDeleteSelected}
         canConnect={connectable.ok}
         connectHint={connectable.why}
@@ -1215,8 +1455,38 @@ export default function App(): React.JSX.Element {
           runSize={selectedRunSize}
           onEndAction={handleEndAction}
           onFlickDirection={handleFlickDirection}
+          decorationInspector={
+            selectedDecorationList.length > 0 ? (
+              <DecorationInspector
+                decorations={selectedDecorationList}
+                onText={handleDecorationText}
+                onStart={handleDecorationStart}
+                onEnd={handleDecorationEnd}
+                onPosition={handleDecorationPosition}
+                onStyle={handleDecorationStyle}
+                onAnimation={handleDecorationAnimation}
+                onZIndex={handleDecorationZIndex}
+                onDelete={handleDeleteSelected}
+              />
+            ) : null
+          }
         />
         <main className="stage">
+          {chart && (
+            <Stage
+              decorations={decorations}
+              selectedIds={selectedDecorationIds}
+              timeSec={playheadSec}
+              onSelect={(id, add) => {
+                if (id === null) handleSelectObjects([], [], false);
+                else if (add) handleToggleDecorationSelected(id);
+                else handleSelectDecoration(id);
+              }}
+              onMoveBy={handleMoveDecorationsBy}
+              onPlaceAt={(x, y) => handlePlaceDecoration(playheadSec, { x, y })}
+              placing={mode === "edit" && placeTarget === "text"}
+            />
+          )}
           <Timeline
             projection={projection}
             view={view}
@@ -1245,6 +1515,16 @@ export default function App(): React.JSX.Element {
             onSelectRun={handleSelectRun}
             onMoveSelected={handleMoveSelected}
             onResize={handleResize}
+            onResizeStart={handleResizeStart}
+            decorations={decorations}
+            selectedDecorationIds={selectedDecorationIds}
+            placeTarget={placeTarget}
+            onPlaceDecoration={(startTimeSec) => handlePlaceDecoration(startTimeSec)}
+            onSelectDecoration={handleSelectDecoration}
+            onToggleDecorationSelected={handleToggleDecorationSelected}
+            onSelectObjects={handleSelectObjects}
+            onResizeDecorationStart={handleResizeDecorationStart}
+            onResizeDecorationEnd={handleResizeDecorationEnd}
             visibleLanes={visibleLanes}
             onSnapped={handleSnapped}
             playbackTimeSec={playheadSec}

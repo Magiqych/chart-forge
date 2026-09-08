@@ -146,6 +146,30 @@ export const theme = {
    * structure - something the document contains - when this is the opposite: it exists
    * only while the pointer is down and is never written anywhere.
    */
+  /**
+   * The decorations, on the timeline and on the stage.
+   *
+   * A muted violet, deliberately unlike any note colour and unlike every analysis lane:
+   * a glance at the timeline has to say "this is presentation, not gameplay" before it
+   * says anything else.
+   */
+  decoration: {
+    fill: "rgba(146, 118, 200, 0.28)",
+    border: "rgba(166, 138, 220, 0.75)",
+    selectedFill: "rgba(186, 158, 240, 0.45)",
+    selectedBorder: "#d8c8ff",
+    handle: "#ffffff",
+    label: "#cdbcea",
+    selectedLabel: "#ffffff",
+    labelFont: "11px ui-sans-serif, system-ui, sans-serif",
+    /** The stage: the playfield the decorations are positioned on. */
+    stageBackground: "#0d1018",
+    stageBorder: "#2a3142",
+    stageGuide: "rgba(120, 132, 160, 0.35)",
+    stageJudgement: "rgba(190, 120, 140, 0.55)",
+    stageSelection: "#d8c8ff",
+    stageHint: "#6b7488",
+  },
   snapGuide: {
     stroke: "rgba(255, 199, 89, 0.98)",
     width: 2,

@@ -13,7 +13,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { LaneId, ProjectedEvent } from "./analysis";
 import { chainOf, connectRun, emptyChart, placeNote, type ChartNote } from "./chart";
+import { buildGuideAnchors } from "./guideAnchors";
 import {
   canRedoSession, canUndoSession, chartOf, moveSelected, openSession, redo, select,
   selectMany, undo, type EditorSession,
@@ -24,6 +26,41 @@ import {
 } from "./magnetSnap";
 
 const BEATS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+
+/**
+ * Analysis Events, as the overlay actually holds them.
+ *
+ * Built as `ProjectedEvent`s and put through `buildGuideAnchors` rather than written out
+ * as anchors, because that conversion is the thing under test: it is the single place the
+ * overlay becomes times the magnet can use, and it is where the visible-layer rule lives.
+ * A test that skipped it could pass while the Editor snapped to a hidden layer.
+ *
+ * Nothing here tests an event's `type` by name. A sung note and a drum onset differ by
+ * which stem they came from and by whether they have an end, which is what the Editor
+ * reads; the kind is an open vocabulary the Analysis contract may add to at any time.
+ */
+function eventsOf(
+  specs: readonly {
+    id: string;
+    startSec: number;
+    endSec?: number;
+    lane: LaneId;
+    type?: string;
+  }[],
+): readonly ProjectedEvent[] {
+  return specs.map((spec) => ({
+    id: spec.id,
+    type: spec.type ?? "onset",
+    startSec: spec.startSec,
+    ...(spec.endSec === undefined ? {} : { endSec: spec.endSec }),
+    endKind: spec.endSec === undefined ? ("instantaneous" as const) : ("bounded" as const),
+    detectorId: `det-${spec.lane}`,
+    stemId: `stem-${spec.lane}`,
+    lane: spec.lane,
+  }));
+}
+
+const ALL_LANES: ReadonlySet<LaneId> = new Set<LaneId>(["drums", "other", "bass", "vocals"]);
 
 /** A chart with the notes described, in placement order. */
 function chartWith(
@@ -63,6 +100,8 @@ function drag(
     enabled?: boolean;
     beats?: readonly number[];
     steps?: number;
+    events?: readonly ProjectedEvent[];
+    visibleLanes?: ReadonlySet<LaneId>;
   } = {},
 ): { session: EditorSession; guides: (number | null)[]; candidates: readonly SnapCandidate[] } {
   const pixelsPerSecond = options.pixelsPerSecond ?? 100;
@@ -73,6 +112,11 @@ function drag(
     beatGrid: options.beats ?? BEATS,
     notes: chartOf(selected).notes,
     excludeNoteIds: new Set(selected.selectedNoteIds),
+    eventAnchors: buildGuideAnchors(
+      options.events ?? [],
+      options.visibleLanes ?? ALL_LANES,
+      { includeEnds: true },
+    ),
   });
   const baseEdgesSec =
     held.endTimeSec !== undefined && held.endTimeSec > held.timeSec
@@ -454,5 +498,139 @@ describe("the edges of the recording", () => {
     const dragged = drag(session, id, 3.4, { pixelsPerSecond: 5 });
     expect(dragged.guides.at(-1)).toBe(3.5);
     expect(noteOf(dragged.session, id).timeSec).toBe(3.5);
+  });
+});
+
+/**
+ * The Analysis Events, as a Select-Mode drag now sees them.
+ *
+ * These are the cases the magnet used to get wrong: the beat grid worked, so the feature
+ * looked alive, while every drag was being offered a candidate list the overlay had never
+ * been added to. Nothing about the code path differs by kind of event - which is the
+ * point - so the coverage here is about the *sources* reaching the magnet at all.
+ */
+describe("dragging a note onto the Analysis overlay", () => {
+  const VOCAL = eventsOf([{ id: "ev-vox", startSec: 2.7, endSec: 3.2, lane: "vocals", type: "note" }]);
+  const ONSET = eventsOf([{ id: "ev-hit", startSec: 2.7, lane: "drums", type: "onset" }]);
+
+  it("lands on a sung note the author can see", () => {
+    const session = chartWith([{ timeSec: 0.2 }]);
+    // Between two beats, so nothing on the grid can be the reason it moved.
+    const { session: after, guides } = drag(session, "n-0001", 2.66, { events: VOCAL, beats: [] });
+    expect(noteOf(after, "n-0001").timeSec).toBe(2.7);
+    expect(guides[guides.length - 1]).toBe(2.7);
+  });
+
+  it("lands on a drum onset the same way", () => {
+    const session = chartWith([{ timeSec: 0.2 }]);
+    const { session: after } = drag(session, "n-0001", 2.66, { events: ONSET, beats: [] });
+    expect(noteOf(after, "n-0001").timeSec).toBe(2.7);
+  });
+
+  it("lands on where a sung note stopped, not only where it started", () => {
+    const session = chartWith([{ timeSec: 0.2 }]);
+    const { session: after } = drag(session, "n-0001", 3.16, { events: VOCAL, beats: [] });
+    expect(noteOf(after, "n-0001").timeSec).toBe(3.2);
+  });
+
+  it("ignores a layer the author has switched off", () => {
+    // The same rule the arrow keys obey: what you cannot walk to, you cannot snap to.
+    const session = chartWith([{ timeSec: 0.2 }]);
+    const { session: after } = drag(session, "n-0001", 2.66, {
+      events: VOCAL,
+      beats: [],
+      visibleLanes: new Set<LaneId>(["drums"]),
+    });
+    expect(noteOf(after, "n-0001").timeSec).toBeCloseTo(2.66, 9);
+  });
+
+  it("takes whichever of a beat and an event is nearer, not whichever was listed first", () => {
+    const session = chartWith([{ timeSec: 0.2 }]);
+    const near = eventsOf([{ id: "ev-near", startSec: 2.52, lane: "vocals" }]);
+    // Beat 2.5 and event 2.52, with the hand at 2.515: the event is a hair closer.
+    const { session: after } = drag(session, "n-0001", 2.515, { events: near, steps: 1 });
+    expect(noteOf(after, "n-0001").timeSec).toBe(2.52);
+  });
+
+  it("stays outside the threshold rather than being dragged across the screen", () => {
+    const session = chartWith([{ timeSec: 0.2 }]);
+    const far = eventsOf([{ id: "ev-far", startSec: 3.0, lane: "vocals" }]);
+    // 0.3s away at 100 px/s is 30 px: well past both the enter and the release distance.
+    const { session: after } = drag(session, "n-0001", 2.7, { events: far, beats: [] });
+    expect(noteOf(after, "n-0001").timeSec).toBeCloseTo(2.7, 9);
+  });
+});
+
+/**
+ * Carrying a held note about.
+ *
+ * The whole-note move is one gesture whatever the note is, so what needs proving is that
+ * a Long is not a special case of it: it lines up by whichever end came nearest, and its
+ * length is not something the move is allowed to have an opinion about.
+ */
+describe("carrying a held note", () => {
+  const LONG_BEATS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  const longChart = () => chartWith([{ timeSec: 10, endTimeSec: 12 }]);
+
+  it("puts the start on the beat and carries the end with it", () => {
+    const { session: after } = drag(longChart(), "n-0001", 10.08, {
+      beats: LONG_BEATS, steps: 1,
+    });
+    const note = noteOf(after, "n-0001");
+    expect(note.timeSec).toBe(10);
+    expect(note.endTimeSec).toBe(12);
+  });
+
+  it("keeps the length exactly when carried somewhere else entirely", () => {
+    const { session: after } = drag(longChart(), "n-0001", 15, { beats: LONG_BEATS });
+    const note = noteOf(after, "n-0001");
+    expect(note.timeSec).toBe(15);
+    expect(note.endTimeSec).toBe(17);
+    expect(note.endTimeSec! - note.timeSec).toBe(2);
+  });
+
+  it("keeps the length whether it snapped or not", () => {
+    // Every stop across a run of beats, including the ones that land free of the grid.
+    for (let target = 10; target <= 15; target += 0.13) {
+      const { session: after } = drag(longChart(), "n-0001", target, { beats: LONG_BEATS });
+      const note = noteOf(after, "n-0001");
+      expect(note.endTimeSec! - note.timeSec).toBeCloseTo(2, 9);
+      expect(note.endTimeSec!).toBeGreaterThan(note.timeSec);
+    }
+  });
+
+  it("lines up by its end when that is the end the author brought near something", () => {
+    // Carried to 10.9: the start is 0.1 from beat 11 and the end 12.9 is 0.1 from 13.
+    // Both are in reach, so what is being checked is that the note ends up on a beat and
+    // still measures two seconds - not which of the two ends the tie went to.
+    const { session: after } = drag(longChart(), "n-0001", 10.94, {
+      beats: LONG_BEATS, steps: 1,
+    });
+    const note = noteOf(after, "n-0001");
+    expect(note.timeSec).toBe(11);
+    expect(note.endTimeSec).toBe(13);
+  });
+
+  it("lands on an Analysis Event, carrying its length", () => {
+    const sung = eventsOf([{ id: "ev-vox", startSec: 14.4, endSec: 14.9, lane: "vocals" }]);
+    const { session: after } = drag(longChart(), "n-0001", 14.36, { events: sung, beats: [] });
+    const note = noteOf(after, "n-0001");
+    expect(note.timeSec).toBe(14.4);
+    expect(note.endTimeSec).toBe(16.4);
+  });
+
+  it("is never caught by either of its own ends", () => {
+    const { candidates } = drag(longChart(), "n-0001", 10.5, { beats: LONG_BEATS });
+    expect(candidates.some((candidate) => candidate.noteId === "n-0001")).toBe(false);
+  });
+
+  it("comes back to the length it had when the drag is undone", () => {
+    const { session: after } = drag(longChart(), "n-0001", 15, { beats: LONG_BEATS });
+    const back = undo(after);
+    expect(noteOf(back, "n-0001").timeSec).toBe(10);
+    expect(noteOf(back, "n-0001").endTimeSec).toBe(12);
+    const forward = redo(back);
+    expect(noteOf(forward, "n-0001").timeSec).toBe(15);
+    expect(noteOf(forward, "n-0001").endTimeSec).toBe(17);
   });
 });

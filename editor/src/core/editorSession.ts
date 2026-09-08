@@ -22,12 +22,16 @@
  */
 
 import {
-  chainOf, connectRun, connectSlides, deleteNotes, disconnectRun, disconnectSlide,
-  isConnected, moveNotes, noteAt, placeNote, resizeNote, setEndAction,
-  setFlickDirection, whyNotConnectable, whyNotConnectableRun,
-  type NoteEndAction,
+  chainOf, connectRun, connectSlides, deleteDecorations, deleteNotes, disconnectRun,
+  disconnectSlide, isConnected, moveChartObjects, moveDecorationsBy, noteAt, placeNote,
+  placeDecoration, resizeNote, setDecorationEnd, setDecorationStart, setEndAction,
+  setNoteStart, setFlickDirection, updateDecoration,
+  whyNotConnectable, whyNotConnectableRun,
+  type DecorationPatch, type NoteEndAction, type PlaceDecorationSpec,
   type ChartNote, type ChartState, type Direction, type PlaceableType, type PlaceNoteSpec,
 } from "./chart";
+import type { ChartDecoration } from "./decoration";
+import { copySelection, pasteInto, type Clipboard } from "./clipboard";
 import {
   baseForCommand, canRedo, canUndo, isChartDirty as historyDirty,
   markSaved as historyMarkSaved, openHistory, record,
@@ -68,6 +72,20 @@ export interface EditorSession {
    */
   readonly selectedNoteIds: readonly string[];
   /**
+   * The selected decorations, in the order they were added.
+   *
+   * A second list beside the notes rather than one list of tagged ids. The two are
+   * different objects with different commands - a note moves across lanes, a decoration
+   * across the playfield - so almost every reader of a selection wants one kind or the
+   * other, and a mixed list would make each of them filter first and occasionally forget
+   * to. Holding them apart is also what lets a selection be mixed at all without any
+   * command having to ask what kind of thing it is looking at.
+   *
+   * Working state, exactly like `selectedNoteIds`: it steers the next command, reaches
+   * neither document, and dirties nothing.
+   */
+  readonly selectedDecorationIds: readonly string[];
+  /**
    * The selected Analysis Event, if any.
    *
    * Held apart from `selectedNoteIds` on purpose: one is a guide object the author is
@@ -82,6 +100,35 @@ export interface EditorSession {
 /** How many notes are selected. */
 export function selectionCount(session: EditorSession): number {
   return session.selectedNoteIds.length;
+}
+
+/** How many objects of any kind are selected, which is what Delete acts on. */
+export function totalSelectionCount(session: EditorSession): number {
+  return session.selectedNoteIds.length + session.selectedDecorationIds.length;
+}
+
+export function isDecorationSelected(session: EditorSession, id: string): boolean {
+  return session.selectedDecorationIds.includes(id);
+}
+
+/** The selected decorations, in selection order, skipping any that have gone. */
+export function selectedDecorations(
+  session: EditorSession,
+): readonly ChartDecoration[] {
+  const byId = new Map(chartOf(session).decorations.map((d) => [d.id, d]));
+  return session.selectedDecorationIds.flatMap((id) => {
+    const found = byId.get(id);
+    return found ? [found] : [];
+  });
+}
+
+/** The one selected decoration, when it is the only thing selected. */
+export function soleSelectedDecoration(
+  session: EditorSession,
+): ChartDecoration | null {
+  if (session.selectedNoteIds.length > 0) return null;
+  if (session.selectedDecorationIds.length !== 1) return null;
+  return selectedDecorations(session)[0] ?? null;
 }
 
 export function isSelected(session: EditorSession, noteId: string): boolean {
@@ -132,6 +179,7 @@ export function openSession(
     snapMode: snap.enabled ? "beat" : "off",
     projectDirty: false,
     selectedNoteIds: [],
+    selectedDecorationIds: [],
     selectedEventId: null,
   };
 }
@@ -219,8 +267,14 @@ export function moveSelected(
   deltaSec: number,
   deltaLane: number,
 ): EditorSession {
-  if (session.selectedNoteIds.length === 0) return session;
-  const chart = moveNotes(chartOf(session), session.selectedNoteIds, deltaSec, deltaLane);
+  if (totalSelectionCount(session) === 0) return session;
+  const chart = moveChartObjects(
+    chartOf(session),
+    session.selectedNoteIds,
+    session.selectedDecorationIds,
+    deltaSec,
+    deltaLane,
+  );
   if (chart === chartOf(session)) return session;
   return { ...session, history: record(session.history, chart) };
 }
@@ -232,6 +286,22 @@ export function resize(
   endTimeSec: number,
 ): EditorSession {
   const chart = resizeNote(chartOf(session), noteId, endTimeSec);
+  if (chart === chartOf(session)) return session;
+  return { ...session, history: record(session.history, chart) };
+}
+
+/**
+ * Change where a held note starts. One history step for the whole drag.
+ *
+ * Alongside `resize` rather than folded into it, so the two grips stay two commands the
+ * whole way down and the undo entry says which end the author actually pulled.
+ */
+export function resizeStart(
+  session: EditorSession,
+  noteId: string,
+  timeSec: number,
+): EditorSession {
+  const chart = setNoteStart(chartOf(session), noteId, timeSec);
   if (chart === chartOf(session)) return session;
   return { ...session, history: record(session.history, chart) };
 }
@@ -411,9 +481,130 @@ export function disconnect(session: EditorSession, noteId: string): EditorSessio
   };
 }
 
-/** Delete everything currently selected, as one command. */
+/**
+ * Delete everything currently selected, as one command.
+ *
+ * Notes and decorations in one history step, because the author pressed Delete once. The
+ * two lists are emptied by one call into the chart apiece and recorded together, so a
+ * mixed selection cannot leave half of itself behind on undo.
+ */
 export function removeSelected(session: EditorSession): EditorSession {
-  return removeMany(session, session.selectedNoteIds);
+  if (totalSelectionCount(session) === 0) return session;
+  let chart = deleteNotes(chartOf(session), session.selectedNoteIds);
+  chart = deleteDecorations(chart, session.selectedDecorationIds);
+  if (chart === chartOf(session)) return session;
+  return {
+    ...session,
+    history: record(session.history, chart),
+    selectedNoteIds: [],
+    selectedDecorationIds: [],
+  };
+}
+
+/**
+ * Add a decoration and select it.
+ *
+ * Selected on placement, as a placed note is not: a decoration is created blank and the
+ * next thing the author will do is type into it, so leaving it unselected would mean
+ * hunting for the thing they just made.
+ */
+export function placeDecorationInSession(
+  session: EditorSession,
+  spec: PlaceDecorationSpec,
+): EditorSession {
+  const { state, decoration } = placeDecoration(baseForCommand(session.history), spec);
+  return {
+    ...session,
+    history: record(session.history, state),
+    selectedNoteIds: [],
+    selectedDecorationIds: [decoration.id],
+  };
+}
+
+/** Take a copy of whatever is selected. Changes no document and dirties nothing. */
+export function copyFromSession(session: EditorSession): Clipboard {
+  return copySelection(
+    chartOf(session),
+    session.selectedNoteIds,
+    session.selectedDecorationIds,
+  );
+}
+
+/**
+ * Paste, and select what was pasted.
+ *
+ * One history step, and the new objects become the selection: the author's next gesture
+ * is almost always to move what they just pasted, and hunting for it first is the thing
+ * that makes a paste feel like it went somewhere else.
+ */
+export function pasteIntoSession(
+  session: EditorSession,
+  clipboard: Clipboard,
+  atSec: number,
+): EditorSession {
+  const result = pasteInto(baseForCommand(session.history), clipboard, atSec);
+  if (result.state === chartOf(session)) return session;
+  return {
+    ...session,
+    history: record(session.history, result.state),
+    selectedNoteIds: result.noteIds,
+    selectedDecorationIds: result.decorationIds,
+  };
+}
+
+/** Change what a decoration says or how it looks. One history step per edit. */
+export function editDecoration(
+  session: EditorSession,
+  id: string,
+  patch: DecorationPatch,
+): EditorSession {
+  const chart = updateDecoration(chartOf(session), id, patch);
+  if (chart === chartOf(session)) return session;
+  return { ...session, history: record(session.history, chart) };
+}
+
+/** Change where a decoration's window begins. One history step for the whole drag. */
+export function resizeDecorationStart(
+  session: EditorSession,
+  id: string,
+  startTimeSec: number,
+): EditorSession {
+  const chart = setDecorationStart(chartOf(session), id, startTimeSec);
+  if (chart === chartOf(session)) return session;
+  return { ...session, history: record(session.history, chart) };
+}
+
+/** Change where a decoration's window ends. One history step for the whole drag. */
+export function resizeDecorationEnd(
+  session: EditorSession,
+  id: string,
+  endTimeSec: number,
+): EditorSession {
+  const chart = setDecorationEnd(chartOf(session), id, endTimeSec);
+  if (chart === chartOf(session)) return session;
+  return { ...session, history: record(session.history, chart) };
+}
+
+/**
+ * Slide the selected decorations across the playfield. One history step for the drag.
+ *
+ * Notes in the selection are untouched: they have no position on the playfield, and this
+ * gesture happens on a surface where time does not appear at all.
+ */
+export function moveSelectedDecorations(
+  session: EditorSession,
+  deltaX: number,
+  deltaY: number,
+): EditorSession {
+  if (session.selectedDecorationIds.length === 0) return session;
+  const chart = moveDecorationsBy(
+    chartOf(session),
+    session.selectedDecorationIds,
+    deltaX,
+    deltaY,
+  );
+  if (chart === chartOf(session)) return session;
+  return { ...session, history: record(session.history, chart) };
 }
 
 /**
@@ -427,13 +618,23 @@ export function removeSelected(session: EditorSession): EditorSession {
 export function undo(session: EditorSession): EditorSession {
   const history = historyUndo(session.history);
   if (history === session.history) return session;
-  return { ...session, history, selectedNoteIds: survivingSelection(session, history) };
+  return {
+    ...session,
+    history,
+    selectedNoteIds: survivingSelection(session, history),
+    selectedDecorationIds: survivingDecorations(session, history),
+  };
 }
 
 export function redo(session: EditorSession): EditorSession {
   const history = historyRedo(session.history);
   if (history === session.history) return session;
-  return { ...session, history, selectedNoteIds: survivingSelection(session, history) };
+  return {
+    ...session,
+    history,
+    selectedNoteIds: survivingSelection(session, history),
+    selectedDecorationIds: survivingDecorations(session, history),
+  };
 }
 
 /**
@@ -452,6 +653,19 @@ function survivingSelection(
   const present = new Set(history.present.notes.map((note) => note.id));
   const kept = session.selectedNoteIds.filter((id) => present.has(id));
   return kept.length === session.selectedNoteIds.length ? session.selectedNoteIds : kept;
+}
+
+/** The same rule for decorations: undoing a placement must not leave one selected. */
+function survivingDecorations(
+  session: EditorSession,
+  history: ChartHistory,
+): readonly string[] {
+  if (session.selectedDecorationIds.length === 0) return session.selectedDecorationIds;
+  const present = new Set(history.present.decorations.map((d) => d.id));
+  const kept = session.selectedDecorationIds.filter((id) => present.has(id));
+  return kept.length === session.selectedDecorationIds.length
+    ? session.selectedDecorationIds
+    : kept;
 }
 
 /**
@@ -509,8 +723,7 @@ export function selectMany(
   session: EditorSession,
   noteIds: readonly string[],
 ): EditorSession {
-  if (sameSelection(session.selectedNoteIds, noteIds)) return session;
-  return { ...session, selectedNoteIds: [...noteIds] };
+  return selectObjects(session, noteIds, []);
 }
 
 /** Add notes to the selection, as a shift-drag does. Already-selected ids stay put. */
@@ -533,7 +746,75 @@ export function toggleSelected(session: EditorSession, noteId: string): EditorSe
 }
 
 export function clearSelection(session: EditorSession): EditorSession {
-  return selectMany(session, []);
+  if (session.selectedNoteIds.length === 0 && session.selectedDecorationIds.length === 0) {
+    return session;
+  }
+  return { ...session, selectedNoteIds: [], selectedDecorationIds: [] };
+}
+
+/** Replace the selection with one decoration, or clear it. */
+export function selectDecoration(
+  session: EditorSession,
+  id: string | null,
+): EditorSession {
+  return selectObjects(session, [], id === null ? [] : [id]);
+}
+
+/**
+ * Replace the selection with a set of each kind, as a rubber band across both rows does.
+ *
+ * The one command that can produce a mixed selection, so it is the one place the two
+ * lists are set together and they cannot fall out of step.
+ */
+export function selectObjects(
+  session: EditorSession,
+  noteIds: readonly string[],
+  decorationIds: readonly string[],
+): EditorSession {
+  if (
+    sameSelection(session.selectedNoteIds, noteIds) &&
+    sameSelection(session.selectedDecorationIds, decorationIds)
+  ) {
+    return session;
+  }
+  return {
+    ...session,
+    selectedNoteIds: [...noteIds],
+    selectedDecorationIds: [...decorationIds],
+  };
+}
+
+/** Add to the selection without disturbing what is already in it. Shift-drag. */
+export function addObjectsToSelection(
+  session: EditorSession,
+  noteIds: readonly string[],
+  decorationIds: readonly string[],
+): EditorSession {
+  const haveNotes = new Set(session.selectedNoteIds);
+  const haveDecorations = new Set(session.selectedDecorationIds);
+  const addedNotes = noteIds.filter((id) => !haveNotes.has(id));
+  const addedDecorations = decorationIds.filter((id) => !haveDecorations.has(id));
+  if (addedNotes.length === 0 && addedDecorations.length === 0) return session;
+  return {
+    ...session,
+    selectedNoteIds: [...session.selectedNoteIds, ...addedNotes],
+    selectedDecorationIds: [...session.selectedDecorationIds, ...addedDecorations],
+  };
+}
+
+/** Add a decoration if it is not selected, remove it if it is. What shift-click does. */
+export function toggleDecorationSelected(
+  session: EditorSession,
+  id: string,
+): EditorSession {
+  return isDecorationSelected(session, id)
+    ? {
+        ...session,
+        selectedDecorationIds: session.selectedDecorationIds.filter(
+          (candidate) => candidate !== id,
+        ),
+      }
+    : { ...session, selectedDecorationIds: [...session.selectedDecorationIds, id] };
 }
 
 function sameSelection(a: readonly string[], b: readonly string[]): boolean {

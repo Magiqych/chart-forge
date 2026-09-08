@@ -135,13 +135,21 @@ schemas or the documentation says they must be. If that is the intent, say so in
 Audio files are never opened. A document may reference audio that does not exist; only
 references to *documents* are required to resolve.
 
-## Negative fixtures
+## Fixtures
 
 A test suite that only sees valid data proves nothing. `fixtures/invalid/` holds
 deliberately broken documents, each as small as the flaw it carries, and
 `fixtures/cases.json` states for each one the **exact** set of problem codes it must
 produce - no more and no fewer. A check that fires for the wrong reason, or a new check
 that fires on an unrelated fixture, fails the suite.
+
+`fixtures/valid/` holds the opposite: documents that must pass every check, registered
+with an empty `expect`. The examples already cover the ordinary case, so these are for
+claims a single example cannot make at once - that a chart written before a field existed
+is still valid, that the same chart with the field present and empty is too, and that a
+document may carry a kind this version of the contract has never heard of. Each is
+evidence for a compatibility promise, so it is worth a fixture of its own rather than a
+sentence in a commit message.
 
 Document paths in `cases.json` are relative to the repository root, so a case can pair a
 broken fixture with a good example - that is how the cross-document cases work.
@@ -160,6 +168,8 @@ is the supported way to re-check them.
 1. Register a code in `CODES` with a one-line description.
 2. Report it from the relevant `check_*` function.
 3. Add a minimal fixture under `fixtures/invalid/` and a case in `fixtures/cases.json`.
+   Add one under `fixtures/valid/` too when the check draws a line something on the
+   good side of it must stay on.
 4. Run the suite: the new case must pass, and no existing case may change.
 
 ## What does not belong here

@@ -23,6 +23,7 @@
  */
 
 import type { ChartNote } from "./chart";
+import { displayWindow, type ChartDecoration } from "./decoration";
 import type { GuideAnchor } from "./guideAnchors";
 
 /**
@@ -70,13 +71,23 @@ export const SNAP_TIME_EPSILON_SEC = 1e-9;
  * same instant collapse in a defined order rather than whichever happened to be built
  * first.
  */
-export type SnapCandidateKind = "beat" | "note-start" | "note-end" | "event";
+export type SnapCandidateKind =
+  | "beat"
+  | "note-start"
+  /** An intermediate judgement point of a slide. */
+  | "note-point"
+  | "note-end"
+  | "decoration-start"
+  | "decoration-end"
+  | "event";
 
 export interface SnapCandidate {
   readonly timeSec: number;
   readonly kind: SnapCandidateKind;
   /** The note an edge candidate came from. Absent for beats and Analysis Events. */
   readonly noteId?: string;
+  /** The decoration an edge candidate came from. Absent otherwise. */
+  readonly decorationId?: string;
   /** The Analysis Event an `event` candidate came from. Absent otherwise. */
   readonly eventId?: string;
 }
@@ -93,16 +104,55 @@ export interface SnapCandidate {
 const KIND_RANK: Readonly<Record<SnapCandidateKind, number>> = {
   beat: 0,
   "note-start": 1,
-  "note-end": 2,
-  event: 3,
+  "note-point": 2,
+  "note-end": 3,
+  "decoration-start": 4,
+  "decoration-end": 5,
+  event: 6,
 };
+
+/**
+ * Which candidates the magnet reaches for first when several are within range.
+ *
+ * Two tiers, and the distinction is between a thing someone put there and a ruler drawn
+ * across the whole song:
+ *
+ *   0  the edges of notes and decorations, and the Analysis Events - every one of them a
+ *      moment an author placed or a detector measured;
+ *   1  the beat grid, which is a uniform background reference.
+ *
+ * Without this the grid quietly wins almost every contest. At a division of four with
+ * beats half a second apart there is a grid line every 0.125 s, which at a normal zoom is
+ * about twenty pixels - so from anywhere the pointer stands, some grid line is within ten
+ * pixels, usually nearer than the note the author is actually trying to line up with.
+ * Nearest-wins alone therefore made "put this note exactly where that one starts" a thing
+ * the author could not reliably do, which is the one alignment they ask for most.
+ *
+ * Inside a tier the rule is unchanged: nearest wins, and the earlier candidate takes a
+ * tie. The grid still wins whenever nothing else is in reach, which is most of the time.
+ */
+export const CANDIDATE_PRIORITY: Readonly<Record<SnapCandidateKind, number>> = {
+  "note-start": 0,
+  "note-point": 0,
+  "note-end": 0,
+  "decoration-start": 0,
+  "decoration-end": 0,
+  event: 0,
+  beat: 1,
+};
+
+export function candidatePriority(candidate: SnapCandidate): number {
+  return CANDIDATE_PRIORITY[candidate.kind];
+}
 
 /** A total order over candidates, so the same inputs always give the same answer. */
 function compareCandidates(a: SnapCandidate, b: SnapCandidate): number {
   if (a.timeSec !== b.timeSec) return a.timeSec - b.timeSec;
   const rank = KIND_RANK[a.kind] - KIND_RANK[b.kind];
   if (rank !== 0) return rank;
-  return (a.noteId ?? a.eventId ?? "").localeCompare(b.noteId ?? b.eventId ?? "");
+  const aName = a.noteId ?? a.decorationId ?? a.eventId ?? "";
+  const bName = b.noteId ?? b.decorationId ?? b.eventId ?? "";
+  return aName.localeCompare(bName);
 }
 
 export interface MagnetCandidateSources {
@@ -123,6 +173,17 @@ export interface MagnetCandidateSources {
    * apart, and the relative spacing inside a selection is something the author built.
    */
   readonly excludeNoteIds?: ReadonlySet<string>;
+  /**
+   * Every decoration in the chart, offered by both edges of its display window.
+   *
+   * A decoration is not a note, but "when does this start" is the same question for both,
+   * and an author lining a caption up with the one before it wants the same magnet. That
+   * is why they arrive here as candidates rather than through a snapping path of their
+   * own: one list, one threshold, one guide, and a new source is a new entry in it.
+   */
+  readonly decorations?: readonly ChartDecoration[];
+  /** The decorations being dragged, excluded for the same reason the notes are. */
+  readonly excludeDecorationIds?: ReadonlySet<string>;
   /** Analysis Event anchors. Empty unless the author asked for Guide Snap. */
   readonly eventAnchors?: readonly GuideAnchor[];
 }
@@ -153,6 +214,14 @@ export function buildMagnetCandidates(
     if (usable(note.timeSec)) {
       candidates.push({ timeSec: note.timeSec, kind: "note-start", noteId: note.id });
     }
+    // A slide's middle points are judgement moments in their own right - the player has
+    // to have reached each of them - so they are things to line up with exactly as its
+    // two ends are. Leaving them out made the middle of a slide invisible to the magnet.
+    for (const point of note.waypoints ?? []) {
+      if (usable(point.timeSec)) {
+        candidates.push({ timeSec: point.timeSec, kind: "note-point", noteId: note.id });
+      }
+    }
     // An end is only a place if the note actually has one. A zero-length or inverted end
     // is the note's own start said twice, and would add a candidate nothing is at.
     if (
@@ -161,6 +230,29 @@ export function buildMagnetCandidates(
       note.endTimeSec > note.timeSec
     ) {
       candidates.push({ timeSec: note.endTimeSec, kind: "note-end", noteId: note.id });
+    }
+  }
+
+  const excludeDecorations = sources.excludeDecorationIds ?? new Set<string>();
+  for (const decoration of sources.decorations ?? []) {
+    if (excludeDecorations.has(decoration.id)) continue;
+    // Both edges of the window the author can actually see, which for a decoration with
+    // no stated end is the default one - so a caption lines up with where the previous
+    // one visibly stops, not with a time nothing is drawn at.
+    const { startSec, endSec } = displayWindow(decoration);
+    if (usable(startSec)) {
+      candidates.push({
+        timeSec: startSec,
+        kind: "decoration-start",
+        decorationId: decoration.id,
+      });
+    }
+    if (usable(endSec) && endSec > startSec) {
+      candidates.push({
+        timeSec: endSec,
+        kind: "decoration-end",
+        decorationId: decoration.id,
+      });
     }
   }
 
@@ -234,10 +326,12 @@ function lowerBound(candidates: readonly SnapCandidate[], timeSec: number): numb
  * search simply moves on to the next-nearest, so the magnet still works instead of going
  * dead near the start of a song.
  *
- * Ties go to the earlier candidate, which is the same rule `snapTime` uses for the beat
- * grid. Two candidates equidistant from the pointer is not a rare case - it happens every
- * time the note is halfway between two beats - and the answer must not depend on which
- * one the search happened to look at first.
+ * Candidates are compared by `CANDIDATE_PRIORITY` first and only then by distance, so a
+ * note start inside the radius is taken in preference to a beat that happens to be a
+ * pixel closer. Inside one tier, ties go to the earlier candidate, which is the same rule
+ * `snapTime` uses for the beat grid. Two candidates equidistant from the pointer is not a
+ * rare case - it happens every time the note is halfway between two beats - and the answer
+ * must not depend on which one the search happened to look at first.
  */
 export function nearestCandidateWithin(
   candidates: readonly SnapCandidate[],
@@ -260,17 +354,41 @@ export function nearestCandidateWithin(
 
   let best: SnapCandidate | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
-  // Ascending, with a strict improvement test, so the earliest of several equally close
+  let bestPriority = Number.POSITIVE_INFINITY;
+  // Ascending, with a strict improvement test, so the earliest of several equally good
   // candidates is the one that wins.
   for (let i = from; i < to; i += 1) {
     const candidate = candidates[i] as SnapCandidate;
     const distance = Math.abs(candidate.timeSec - timeSec);
-    if (distance > reach || distance >= bestDistance) continue;
+    if (distance > reach) continue;
+    const priority = candidatePriority(candidate);
+    if (priority > bestPriority) continue;
+    if (priority === bestPriority && distance >= bestDistance) continue;
     if (!accept(candidate)) continue;
     best = candidate;
     bestDistance = distance;
+    bestPriority = priority;
   }
   return best;
+}
+
+/**
+ * Whether one candidate beats another for the same pointer position.
+ *
+ * The single statement of the preference, so the search, the hysteresis and any future
+ * caller cannot come to different conclusions about the same pair.
+ */
+export function candidateWins(
+  candidate: SnapCandidate,
+  candidateDistanceSec: number,
+  against: SnapCandidate | null,
+  againstDistanceSec: number,
+): boolean {
+  if (against === null) return true;
+  const mine = candidatePriority(candidate);
+  const theirs = candidatePriority(against);
+  if (mine !== theirs) return mine < theirs;
+  return candidateDistanceSec < againstDistanceSec;
 }
 
 export interface MagnetSnapInput {
@@ -408,26 +526,37 @@ export function magnetSnapDelta(input: MagnetSnapInput): MagnetSnapOutcome {
     const found = nearestCandidateWithin(input.candidates, at, enterSec, (c) => reachable(c, base));
     if (!found) continue;
     const distance = Math.abs(found.timeSec - at);
-    // Strictly closer, so an equal match on a later edge cannot displace an earlier one.
-    if (distance >= bestDistance) continue;
+    // The same preference the search itself uses, applied across the note's edges: a
+    // note start reached by one edge beats a beat reached by another, and only then does
+    // the closer of two equals win. Strict, so an equal match on a later edge cannot
+    // displace an earlier one.
+    if (!candidateWins(found, distance, bestCandidate, bestDistance)) continue;
     bestCandidate = found;
     bestBase = base;
     bestDistance = distance;
   }
 
   // The candidate already holding the note keeps it while it is still within reach and
-  // nothing has come strictly nearer.
+  // nothing has come strictly nearer. The rule itself lives in `heldWins`, so a drag and
+  // a resize cannot drift into two different ideas of when a magnet lets go.
   const held = input.held;
-  if (held && reachable(held.candidate, held.baseEdgeSec)) {
-    const heldDistance = Math.abs(held.candidate.timeSec - (held.baseEdgeSec + raw));
-    if (heldDistance <= releaseSec + SNAP_TIME_EPSILON_SEC && heldDistance <= bestDistance) {
-      return {
-        deltaSec: held.candidate.timeSec - held.baseEdgeSec,
-        candidate: held.candidate,
-        guideTimeSec: held.candidate.timeSec,
-        hold: held,
-      };
-    }
+  if (
+    held &&
+    reachable(held.candidate, held.baseEdgeSec) &&
+    heldWins(
+      held.candidate,
+      Math.abs(held.candidate.timeSec - (held.baseEdgeSec + raw)),
+      bestCandidate,
+      bestDistance,
+      releaseSec,
+    )
+  ) {
+    return {
+      deltaSec: held.candidate.timeSec - held.baseEdgeSec,
+      candidate: held.candidate,
+      guideTimeSec: held.candidate.timeSec,
+      hold: held,
+    };
   }
 
   if (bestCandidate === null) return free;
@@ -439,13 +568,163 @@ export function magnetSnapDelta(input: MagnetSnapInput): MagnetSnapOutcome {
   };
 }
 
+/**
+ * Whether a captured candidate keeps the thing it caught.
+ *
+ * The one statement of the magnet's hysteresis, shared by every gesture that has one, so
+ * "how far do I have to pull before it lets go" has a single answer in the Editor rather
+ * than one per handler. A hold survives while it is still inside the wider release
+ * distance and nothing has come strictly nearer; the moment something else is closer, the
+ * hold gives way, or a note could stay stuck to one beat while sitting on top of the next.
+ */
+function heldWins(
+  held: SnapCandidate,
+  heldDistanceSec: number,
+  best: SnapCandidate | null,
+  bestDistanceSec: number,
+  releaseSec: number,
+): boolean {
+  if (heldDistanceSec > releaseSec + SNAP_TIME_EPSILON_SEC) return false;
+  // Nothing else is in reach, so there is nothing to give way to.
+  if (best === null) return true;
+  // It keeps what it caught unless the challenger is genuinely better by the same rule
+  // the search uses - so a beat drifting a fraction closer cannot steal a note start the
+  // magnet is already holding.
+  return !candidateWins(best, bestDistanceSec, held, heldDistanceSec);
+}
+
+/**
+ * A single edge being dragged on its own, as opposed to a whole note being carried.
+ *
+ * Resizing is a different question from moving and needs a different answer, but it must
+ * not be a different *magnet*. Moving asks "how far should this note travel", and its
+ * answer is a delta applied to everything selected. Resizing asks "where should this one
+ * edge land", and the other edge must not move at all: the pointer *is* the edge, so the
+ * answer is a time rather than a distance.
+ *
+ * Both go through the same candidates, the same pixel threshold and the same hysteresis,
+ * which is the point of stating this here instead of in a pointer handler.
+ */
+export interface MagnetEdgeInput {
+  readonly candidates: readonly SnapCandidate[];
+  /** Where the pointer has put the edge, before the magnet has had a say. */
+  readonly rawTimeSec: number;
+  /**
+   * The bounds the edge may not cross, from the note's own invariants.
+   *
+   * The end of a held note may not reach its start, and its start may not reach its end;
+   * stating that as a range here means a candidate outside it is never offered and never
+   * drawn a guide for, rather than being promised and then quietly disobeyed by a clamp
+   * further down.
+   */
+  readonly minTimeSec?: number;
+  readonly maxTimeSec?: number;
+  readonly pixelsPerSecond: number;
+  readonly enabled: boolean;
+  readonly held?: MagnetEdgeHold | null;
+  readonly enterPx?: number;
+  readonly releasePx?: number;
+}
+
+/**
+ * A candidate holding one edge.
+ *
+ * No base time, unlike `MagnetHold`: a moving note is offered as a delta from where it
+ * started, so the hold has to remember which edge it caught, while a dragged edge simply
+ * follows the pointer and there is only ever one of it.
+ */
+export interface MagnetEdgeHold {
+  readonly candidate: SnapCandidate;
+}
+
+export interface MagnetEdgeOutcome {
+  /** Where the edge should actually go. The clamped pointer time when nothing took it. */
+  readonly timeSec: number;
+  readonly candidate: SnapCandidate | null;
+  readonly guideTimeSec: number | null;
+  readonly hold: MagnetEdgeHold | null;
+}
+
+/**
+ * Where a dragged edge should land, where to say why, and what is holding it.
+ *
+ * The resize counterpart of `magnetSnapDelta`, and deliberately the same shape: a time,
+ * the candidate it came from, the guide to draw, and the hold to carry into the next
+ * pointer move. A caller that can draw one can draw the other without knowing which
+ * gesture produced it, and neither of them knows or cares whether the candidate was a
+ * beat, an Analysis Event or the edge of another note.
+ */
+export function magnetSnapEdge(input: MagnetEdgeInput): MagnetEdgeOutcome {
+  const min = Number.isFinite(input.minTimeSec) ? Math.max(0, input.minTimeSec as number) : 0;
+  const max = Number.isFinite(input.maxTimeSec)
+    ? Math.max(min, input.maxTimeSec as number)
+    : Number.POSITIVE_INFINITY;
+  const raw = Number.isFinite(input.rawTimeSec) ? input.rawTimeSec : min;
+  const clamped = Math.min(Math.max(raw, min), max);
+
+  const free: MagnetEdgeOutcome = {
+    timeSec: clamped,
+    candidate: null,
+    guideTimeSec: null,
+    hold: null,
+  };
+  if (!input.enabled || input.candidates.length === 0) return free;
+
+  const enterSec = magnetThresholdSec(input.pixelsPerSecond, input.enterPx ?? MAGNET_ENTER_PX);
+  if (enterSec <= 0) return free;
+  const releaseSec = Math.max(
+    enterSec,
+    magnetThresholdSec(input.pixelsPerSecond, input.releasePx ?? MAGNET_RELEASE_PX),
+  );
+
+  // A candidate the edge is not allowed to reach is not a place it can go, so the search
+  // passes over it and keeps looking rather than offering a guide the clamp would break.
+  const reachable = (candidate: SnapCandidate): boolean =>
+    candidate.timeSec >= min - SNAP_TIME_EPSILON_SEC &&
+    candidate.timeSec <= max + SNAP_TIME_EPSILON_SEC;
+
+  const found = nearestCandidateWithin(input.candidates, clamped, enterSec, reachable);
+  const bestDistance = found ? Math.abs(found.timeSec - clamped) : Number.POSITIVE_INFINITY;
+
+  const held = input.held?.candidate ?? null;
+  if (held && reachable(held)) {
+    const heldDistance = Math.abs(held.timeSec - clamped);
+    if (heldWins(held, heldDistance, found, bestDistance, releaseSec)) {
+      return landed(held, min, max);
+    }
+  }
+
+  if (!found) return free;
+  return landed(found, min, max);
+}
+
+/** The outcome of an edge coming to rest on a candidate. */
+function landed(candidate: SnapCandidate, min: number, max: number): MagnetEdgeOutcome {
+  const timeSec = Math.min(Math.max(candidate.timeSec, min), max);
+  return {
+    timeSec,
+    candidate,
+    // The guide names where the edge actually went, never where a candidate wished it
+    // would go, so a line on screen is always a line the note is on.
+    guideTimeSec: timeSec,
+    hold: { candidate },
+  };
+}
+
 /** A short phrase naming what a note lined up with, for the status line. */
 export function describeCandidate(candidate: SnapCandidate): string {
+  const edge = candidate.kind.endsWith("-start")
+    ? "start"
+    : candidate.kind === "note-point"
+      ? "point"
+      : "end";
   const what =
     candidate.kind === "beat"
       ? "beat"
       : candidate.kind === "event"
         ? (candidate.eventId ?? "event")
-        : `${candidate.noteId ?? "note"} ${candidate.kind === "note-start" ? "start" : "end"}`;
+        : candidate.kind === "decoration-start" || candidate.kind === "decoration-end"
+          ? `${candidate.decorationId ?? "decoration"} ${edge}`
+          : `${candidate.noteId ?? "note"} ${edge}`;
   return `${what} @ ${candidate.timeSec.toFixed(3)}s`;
 }

@@ -994,6 +994,32 @@ read as a position on the time axis and a Slide reads as checkpoints joined by a
 rather than as a diagonal Long. A flick chain's run is a solid line, so it is never read as
 a slide.
 
+Text Decorations: presentation laid over the playfield, in `chart.decorations[]`. A
+Decoration is not a Note - it has no lane, nothing about it is judged, and a Player that
+ignores the array plays the same chart - so it lives in its own list with its own ids and
+its own commands. Placed from the timeline or from the stage, positioned in normalized
+playfield coordinates, styled and animated from the inspector, snapped by the same magnet
+as everything else, and undone in one step per gesture. Because a decoration has two
+independent coordinates and the timeline has room for only one, it is edited on two
+surfaces: the timeline row decides *when*, the stage decides *where*. See
+[docs/decorations.md](../docs/decorations.md).
+
+Copy and paste over the selection, notes and decorations alike, with fresh ids, relative
+times preserved, and a flick run carried across when both of its notes were copied.
+
+Magnet snapping across every kind of timing. Carrying a note near another note's start
+aligns the two, and the same magnet reaches note ends, a slide's waypoints, decoration
+windows, the Analysis Events in the layers that are on, and the beat grid - one candidate
+list, one pixel threshold, one hysteresis, one dotted guide. Candidates are tiered: a
+timing an author placed or a detector measured is taken in preference to the beat grid,
+because at a fine division some grid line is always within a few pixels and nearest-wins
+alone made note-to-note alignment unreachable. The grid still wins whenever nothing else
+is in reach.
+
+Hitsounds follow a note's *moments* rather than its start. A connected slide is judged at
+every point along it, so every point sounds; a note that finishes in a flick sounds again
+at its end; a plain Long's release stays silent, because releasing is not a hit.
+
 Not implemented, and deliberately so: automatic event-to-note conversion, bulk conversion,
 turning an event's duration into a hold, any mapping from a stem to a lane, dragging a
 batch placement, a general keyboard shortcut
@@ -1008,6 +1034,11 @@ Known limitations:
 - A slide's individual points cannot be dragged on their own. Moving a chain moves all of
   it; to move one point, `Disconnect`, move it, and `Connect` again.
 - Only a Long can be resized. A slide's end is a place rather than a length.
+- Decoration 0.1 is text only. Image, shape and effect decorations, keyframes, custom
+  fonts and attachment to a note are all future work, and none of them is stubbed out.
+- The stage draws the playfield at a fixed 3:4 shape. That is a drawing convention of the
+  panel and nothing else - the contract stores normalized coordinates precisely so that no
+  aspect ratio is baked into a chart.
 - `Connect` refuses two chains whose times interleave rather than guessing an order.
 - The inspector is read-only. `time` and `lane` are shown at full precision but cannot be
   typed into; editing is by direct manipulation in the lanes.

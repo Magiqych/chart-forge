@@ -6,11 +6,13 @@ import {
   buildMagnetCandidates,
   describeCandidate,
   magnetSnapDelta,
+  magnetSnapEdge,
   magnetThresholdSec,
   nearestCandidateWithin,
   MAGNET_ENTER_PX,
   MAGNET_RELEASE_PX,
   SNAP_TIME_EPSILON_SEC,
+  type MagnetEdgeInput,
   type MagnetHold,
   type MagnetSnapInput,
   type SnapCandidate,
@@ -664,5 +666,149 @@ describe("describing what a note landed on", () => {
   it("names an event", () => {
     expect(describeCandidate({ timeSec: 2, kind: "event", eventId: "ev-1" }))
       .toBe("ev-1 @ 2.000s");
+  });
+});
+
+/**
+ * One edge dragged on its own.
+ *
+ * The resize counterpart of `magnetSnapDelta`, and the reason it exists: a grip follows
+ * the pointer rather than carrying a note along with it, so the answer is a time and not
+ * a distance. Everything else about the magnet - the sources, the pixel threshold, the
+ * hysteresis - must be the same, and these check that it is.
+ */
+describe("magnet snapping one edge", () => {
+  const grid = buildMagnetCandidates({ beatGrid: [0, 1, 2, 3] });
+
+  const edgeTo = (
+    candidates: readonly SnapCandidate[],
+    at: number,
+    overrides: Partial<MagnetEdgeInput> = {},
+  ) =>
+    magnetSnapEdge({
+      candidates,
+      rawTimeSec: at,
+      pixelsPerSecond: 100,
+      enabled: true,
+      ...overrides,
+    });
+
+  it("takes the edge to a beat inside the threshold", () => {
+    const out = edgeTo(grid, 2.05);
+    expect(out.timeSec).toBe(2);
+    expect(out.guideTimeSec).toBe(2);
+    expect(out.candidate?.kind).toBe("beat");
+  });
+
+  it("leaves the edge alone outside the threshold", () => {
+    const out = edgeTo(grid, 2.2);
+    expect(out.timeSec).toBeCloseTo(2.2, 12);
+    expect(out.candidate).toBeNull();
+    expect(out.guideTimeSec).toBeNull();
+    expect(out.hold).toBeNull();
+  });
+
+  it("takes an Analysis Event as readily as a beat", () => {
+    const candidates = buildMagnetCandidates({ eventAnchors: [anchor("ev-3", 4.42)] });
+    const out = edgeTo(candidates, 4.45);
+    expect(out.timeSec).toBe(4.42);
+    expect(out.candidate?.eventId).toBe("ev-3");
+  });
+
+  it("takes another note's start and another note's end", () => {
+    const candidates = buildMagnetCandidates({ notes: [note("other", 5, 6)] });
+    expect(edgeTo(candidates, 4.97).candidate?.kind).toBe("note-start");
+    expect(edgeTo(candidates, 6.03).candidate?.kind).toBe("note-end");
+  });
+
+  it("chooses the nearest of several in reach, inside one tier", () => {
+    const candidates = buildMagnetCandidates({ beatGrid: [2, 2.04] });
+    expect(edgeTo(candidates, 2.05).timeSec).toBe(2.04);
+    expect(edgeTo(candidates, 2.01).timeSec).toBe(2);
+  });
+
+  it("prefers a measured event to a beat that happens to be nearer", () => {
+    // The beat grid is a ruler drawn across the whole song; an Analysis Event is a
+    // moment something actually happened. When both are in reach the measured one wins,
+    // because at a fine division there is always a grid line closer than whatever the
+    // author is aiming at, and nearest-wins alone made the other sources unreachable.
+    const candidates = buildMagnetCandidates({
+      beatGrid: [2],
+      eventAnchors: [anchor("ev-close", 2.04)],
+    });
+    expect(edgeTo(candidates, 2.05).timeSec).toBe(2.04);
+    expect(edgeTo(candidates, 2.01).timeSec).toBe(2.04);
+  });
+
+  it("still takes the beat when nothing else is within reach", () => {
+    const candidates = buildMagnetCandidates({
+      beatGrid: [2],
+      eventAnchors: [anchor("ev-far", 2.5)],
+    });
+    expect(edgeTo(candidates, 2.01).timeSec).toBe(2);
+  });
+
+  it("refuses a candidate on the wrong side of the other end, and finds another", () => {
+    // A grip on the end, with the start pinned at 2: everything at or before 2 is a place
+    // this edge cannot go, however close the pointer brings it.
+    const out = edgeTo(grid, 2.02, { minTimeSec: 2.01 });
+    expect(out.candidate).toBeNull();
+    expect(out.timeSec).toBeCloseTo(2.02, 12);
+  });
+
+  it("clamps a pointer that has been dragged past the other end", () => {
+    const out = edgeTo(grid, 0.5, { minTimeSec: 2.01 });
+    expect(out.timeSec).toBe(2.01);
+  });
+
+  it("clamps a start grip dragged past its own end", () => {
+    const out = edgeTo(grid, 9, { maxTimeSec: 2.99 });
+    expect(out.timeSec).toBe(2.99);
+  });
+
+  it("never lands outside the bounds it was given", () => {
+    for (let at = -1; at <= 5; at += 0.07) {
+      const out = edgeTo(grid, at, { minTimeSec: 0.6, maxTimeSec: 2.4 });
+      expect(out.timeSec).toBeGreaterThanOrEqual(0.6);
+      expect(out.timeSec).toBeLessThanOrEqual(2.4);
+      if (out.guideTimeSec !== null) expect(out.guideTimeSec).toBe(out.timeSec);
+    }
+  });
+
+  it("moves freely when the magnet is suspended", () => {
+    expect(edgeTo(grid, 2.02, { enabled: false }).timeSec).toBeCloseTo(2.02, 12);
+  });
+
+  it("holds on for longer than it took to catch it, like the whole-note magnet", () => {
+    const enterSec = MAGNET_ENTER_PX / 100;
+    const releaseSec = MAGNET_RELEASE_PX / 100;
+    const caught = edgeTo(grid, 2 + enterSec / 2);
+    expect(caught.hold?.candidate.timeSec).toBe(2);
+
+    // Past the distance that would have taken it, but not past the release distance.
+    const kept = edgeTo(grid, 2 + (enterSec + releaseSec) / 2, { held: caught.hold });
+    expect(kept.timeSec).toBe(2);
+
+    const freed = edgeTo(grid, 2 + releaseSec * 1.5, { held: caught.hold });
+    expect(freed.candidate).toBeNull();
+  });
+
+  it("gives the hold up when another candidate is strictly nearer", () => {
+    const held = { candidate: { timeSec: 2, kind: "beat" } as SnapCandidate };
+    const out = edgeTo(grid, 3.01, { held });
+    expect(out.timeSec).toBe(3);
+  });
+
+  it("does not snap at all when the zoom is nonsense", () => {
+    expect(edgeTo(grid, 2.001, { pixelsPerSecond: 0 }).candidate).toBeNull();
+  });
+
+  it("survives a nonsense pointer time", () => {
+    expect(Number.isFinite(edgeTo(grid, Number.NaN).timeSec)).toBe(true);
+  });
+
+  it("gives the same answer for the same input, every time", () => {
+    const first = edgeTo(grid, 2.03);
+    for (let i = 0; i < 20; i += 1) expect(edgeTo(grid, 2.03)).toEqual(first);
   });
 });

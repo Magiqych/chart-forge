@@ -119,6 +119,12 @@ contaminating the core:
   single game, and
 - an `extensions` namespace where game-specific data lives.
 
+Beside the notes, a chart may carry **Decorations**: presentation laid over the playfield,
+such as the words that appear on screen during a song. A Decoration is not a Note - it has
+no lane, nothing about it is judged or scored, and a Player that ignores them plays exactly
+the same chart - so it lives in its own optional array with its own ids. See
+[docs/decorations.md](docs/decorations.md).
+
 ## Non-goals for now
 
 No UI framework, desktop shell, ML framework, dependency manifest, CI or container setup

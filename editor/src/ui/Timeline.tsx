@@ -15,8 +15,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
 import {
-  travelsBetweenLanes,
+  slidePoints, travelsBetweenLanes, MIN_HELD_DURATION_SEC,
   type ChartNote, type ChartState, type EditorMode, type PlaceableType,
+  type PlaceTarget,
 } from "../core/chart";
 import {
   hitTestAnalysisEvent, pitchRangesFor, type LaneHitTarget, type PitchRanges,
@@ -26,13 +27,20 @@ import {
   type SelectionRect,
 } from "../core/noteGeometry";
 import { findRow, laneAtY, layoutRows, rowsForChart, type RowId } from "../core/lanes";
-import { pointerIntent } from "../core/pointerIntent";
+import {
+  MIN_DECORATION_DURATION_SEC, displayWindow, type ChartDecoration,
+} from "../core/decoration";
+import {
+  decorationsInRect, hitTestDecoration, type DecorationPart,
+} from "../core/decorationGeometry";
+import { pointerIntent, type ResizeEdge } from "../core/pointerIntent";
 import {
   resolvePlacementTime, type SnapMode, type SnapSettings,
 } from "../core/snap";
 import { buildGuideAnchors, type GuideAnchor } from "../core/guideAnchors";
 import {
-  buildMagnetCandidates, magnetSnapDelta, type MagnetHold, type SnapCandidate,
+  buildMagnetCandidates, magnetSnapDelta, magnetSnapEdge,
+  type MagnetEdgeHold, type MagnetHold, type SnapCandidate,
 } from "../core/magnetSnap";
 import {
   clampViewportStart,
@@ -50,6 +58,7 @@ import {
   type NotesRenderStats,
   type NotesScene,
   type PlacementPreview,
+  type ResizePreview,
 } from "../render/notesRenderer";
 import { TimelineRenderer, type RenderStats, type Scene } from "../render/timelineRenderer";
 import { TimelineScrollbar } from "./TimelineScrollbar";
@@ -113,6 +122,30 @@ export interface TimelineProps {
   readonly onMoveSelected: (deltaSec: number, deltaLane: number) => void;
   /** Commit a drag that changed where a held note ends. */
   readonly onResize: (noteId: string, endTimeSec: number) => void;
+  /** Commit a drag that changed where a held note starts. Its end is untouched. */
+  readonly onResizeStart: (noteId: string, timeSec: number) => void;
+
+  /**
+   * The decorations, and what is selected among them.
+   *
+   * Passed beside the notes rather than inside the chart prop because the notes row can
+   * be switched off on its own, and a decoration is not hidden by hiding the notes.
+   */
+  readonly decorations: readonly ChartDecoration[];
+  readonly selectedDecorationIds: readonly string[];
+  /** What Edit Mode makes: a note of the chosen kind, or a text decoration. */
+  readonly placeTarget: PlaceTarget;
+  readonly onPlaceDecoration: (startTimeSec: number) => void;
+  readonly onSelectDecoration: (id: string | null) => void;
+  readonly onToggleDecorationSelected: (id: string) => void;
+  /** Replace, or extend, a selection that may hold both kinds. What a rubber band does. */
+  readonly onSelectObjects: (
+    noteIds: readonly string[],
+    decorationIds: readonly string[],
+    add: boolean,
+  ) => void;
+  readonly onResizeDecorationStart: (id: string, startTimeSec: number) => void;
+  readonly onResizeDecorationEnd: (id: string, endTimeSec: number) => void;
   /** Playback position, so a zoom can put it back on screen when it leaves. */
   readonly playbackTimeSec: number;
   readonly followPlayhead: boolean;
@@ -139,6 +172,9 @@ export interface TimelineProps {
  */
 const MOVE_THRESHOLD_PX = 3;
 
+/** Shared empty set, so a default argument does not allocate on every drag. */
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
+
 export function Timeline(props: TimelineProps): React.JSX.Element {
   const {
     projection, view, onViewChange, playheadSec, onSeek,
@@ -146,7 +182,10 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     onNotesStats, chart, snapGrid, snap, snapMode, visibleLanes, onSnapped,
     selectedNoteIds, mode, noteType,
     onPlace, onPlaceDragged, onSelect, onSelectMany, onToggleSelected, onSelectRun,
-    onMoveSelected, onResize,
+    onMoveSelected, onResize, onResizeStart,
+    decorations, selectedDecorationIds, placeTarget, onPlaceDecoration,
+    onSelectDecoration, onToggleDecorationSelected, onSelectObjects,
+    onResizeDecorationStart, onResizeDecorationEnd,
     playbackTimeSec, followPlayhead, onMeasuredWidth, selectedEventId, onSelectEvent,
   } = props;
 
@@ -189,6 +228,15 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
    * produced it: every path that clears the move clears the line with it.
    */
   const [moveDelta, setMoveDelta] = useState<MoveDelta | null>(null);
+  /**
+   * Where the magnet has taken whatever is being dragged.
+   *
+   * One piece of state for every gesture that has a magnet, so the dotted line is drawn
+   * by one rule and a beat, an Analysis Event and another note's edge all produce the
+   * same line. It is cleared everywhere a gesture is cleared, which is what keeps it from
+   * outliving the drag it belongs to.
+   */
+  const [snapGuideSec, setSnapGuideSec] = useState<number | null>(null);
   const moveRef = useRef<{
     pointerId: number;
     x: number;
@@ -220,11 +268,49 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
      */
     hold: MagnetHold | null;
     moved: boolean;
+    /**
+     * Whether this drag may change lanes at all.
+     *
+     * Set for a drag begun in the decorations row. A decoration has no lane, and a
+     * vertical wobble there must not quietly move whatever notes are in the selection to
+     * another one - the author is looking at a row where lanes are not drawn.
+     */
+    lanesLocked: boolean;
   } | null>(null);
 
-  const [resizePreview, setResizePreview] =
-    useState<{ noteId: string; endTimeSec: number } | null>(null);
-  const resizeRef = useRef<{ pointerId: number; noteId: string; endTimeSec: number } | null>(null);
+  const [resizePreview, setResizePreview] = useState<ResizePreview | null>(null);
+  /**
+   * A decoration's window being dragged.
+   *
+   * Its own preview rather than a widened `resizePreview`, because the renderer draws the
+   * two in different rows by different rules and a shared value would have to be
+   * unpacked with a question about which kind it held.
+   */
+  const [decorationResize, setDecorationResize] = useState<{
+    decorationId: string;
+    startTimeSec: number;
+    endTimeSec: number;
+  } | null>(null);
+  /**
+   * A grip being dragged.
+   *
+   * Carries the same three things the move does - the candidates, the magnet's memory and
+   * the times as they stand - because it is the same gesture asked about one edge instead
+   * of a whole note. `edge` says which grip was taken; `fixedSec` is the other end, which
+   * this gesture must not move, and which bounds where this one may go.
+   */
+  const resizeRef = useRef<{
+    pointerId: number;
+    /** Which object's window is being dragged. Exactly one of the two is set. */
+    noteId: string | null;
+    decorationId: string | null;
+    edge: ResizeEdge;
+    fixedSec: number;
+    timeSec: number;
+    endTimeSec: number;
+    candidates: readonly SnapCandidate[];
+    hold: MagnetEdgeHold | null;
+  } | null>(null);
 
   /** True while the pointer is over a selected Long's grip, so the cursor can say so. */
   const [overHandle, setOverHandle] = useState(false);
@@ -247,6 +333,8 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     setPreview(null);
     setMoveDelta(null);
     setResizePreview(null);
+    setDecorationResize(null);
+    setSnapGuideSec(null);
   }, []);
 
   /**
@@ -364,6 +452,10 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         marquee,
         moveDelta,
         resizePreview,
+        snapGuideTimeSec: snapGuideSec,
+        decorations,
+        selectedDecorationIds,
+        decorationResizePreview: decorationResize,
         playheadSec,
       };
       onNotesStats(renderer.render(scene));
@@ -371,7 +463,8 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     return () => cancelAnimationFrame(frame);
   }, [
     view, widthPx, layout, chart, selectedNoteIds, preview, marquee, moveDelta,
-    resizePreview, playheadSec, onNotesStats,
+    resizePreview, snapGuideSec, playheadSec, onNotesStats,
+    decorations, selectedDecorationIds, decorationResize,
   ]);
 
   const current = useMemo(() => ({ ...view, widthPx }), [view, widthPx]);
@@ -445,6 +538,41 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
   const snapEndTime = useCallback(
     (rawSec: number) => resolveTime(rawSec, endAnchors),
     [resolveTime, endAnchors],
+  );
+
+  /**
+   * Everything a gesture in Select Mode may line a note up with.
+   *
+   * The one place the magnet's targets are decided, and every drag goes through it - the
+   * whole-note move and both grips alike. That is deliberate: the bug this replaced was
+   * one gesture assembling its own sources and quietly leaving the Analysis Events out,
+   * which is invisible from the outside because the beat grid still worked.
+   *
+   * The Analysis side arrives already converted. `buildGuideAnchors` is the single place
+   * the overlay becomes timings, so the magnet inherits its rules for free: the layers
+   * that are switched on are the ones you can snap to, an event's kind is never tested by
+   * name, and an end is only offered by an event that actually has one. Ends are included
+   * because a note being carried has ends of its own, and lining a hold up with where a
+   * sung note stopped is exactly what the author is looking at when they do it.
+   *
+   * Unrelated to the Snap control, which governs where a *click places* a new note. This
+   * is about carrying something that already exists, and tying the two together made the
+   * magnet silently dead for any project saved with snapping off.
+   */
+  const dragCandidates = useCallback(
+    (
+      excludeNoteIds: ReadonlySet<string>,
+      excludeDecorationIds: ReadonlySet<string> = EMPTY_IDS,
+    ) =>
+      buildMagnetCandidates({
+        beatGrid: snapGrid,
+        notes: chart?.notes ?? [],
+        excludeNoteIds,
+        decorations,
+        excludeDecorationIds,
+        eventAnchors: endAnchors,
+      }),
+    [snapGrid, chart, decorations, endAnchors],
   );
 
   /** Where the pointer is, in chart terms. Null outside the notes row. */
@@ -542,6 +670,103 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         return;
       }
 
+      // The decorations row, before anything else, because it is a row of its own and a
+      // press in it can never mean a note. Handling it here rather than teaching the note
+      // path about decorations keeps the two gestures from having to test what they are
+      // looking at on every branch.
+      const decorationRow = findRow(layout, "decorations");
+      if (decorationRow && y >= decorationRow.topPx && y < decorationRow.bottomPx) {
+        const pressSec = Math.max(0, xToTime(x, current));
+        if (mode === "edit") {
+          if (placeTarget === "text") onPlaceDecoration(pressSec);
+          return;
+        }
+
+        const hit = hitTestDecoration(x, y, decorations, decorationRow, current);
+        if (!hit) {
+          marqueeRef.current = { pointerId: event.pointerId, x, y, add: event.shiftKey };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setMarquee(rectFromCorners(x, y, x, y));
+          if (!event.shiftKey) onSelectObjects([], [], false);
+          return;
+        }
+        if (event.shiftKey) {
+          onToggleDecorationSelected(hit.decoration.id);
+          return;
+        }
+
+        const selected = selectedDecorationIds.includes(hit.decoration.id);
+        const grip: DecorationPart | null =
+          selected && hit.part !== "body" ? hit.part : null;
+        if (grip) {
+          const window = displayWindow(hit.decoration);
+          resizeRef.current = {
+            pointerId: event.pointerId,
+            noteId: null,
+            decorationId: hit.decoration.id,
+            edge: grip === "startHandle" ? "start" : "end",
+            fixedSec: grip === "startHandle" ? window.endSec : window.startSec,
+            timeSec: window.startSec,
+            endTimeSec: window.endSec,
+            candidates: dragCandidates(EMPTY_IDS, new Set([hit.decoration.id])),
+            hold: null,
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setDecorationResize({
+            decorationId: hit.decoration.id,
+            startTimeSec: window.startSec,
+            endTimeSec: window.endSec,
+          });
+          return;
+        }
+
+        // Pressing something already selected carries the whole selection, which is what
+        // makes a mixed set of notes and decorations draggable as one. Pressing anything
+        // else selects it first, exactly as pressing a note does.
+        const movingNotes = selected ? selectedNoteIds : [];
+        const movingDecorations = selected
+          ? selectedDecorationIds
+          : [hit.decoration.id];
+        if (!selected) onSelectDecoration(hit.decoration.id);
+
+        const edges: number[] = [];
+        let earliest = Number.POSITIVE_INFINITY;
+        for (const id of movingDecorations) {
+          const found = decorations.find((candidate) => candidate.id === id);
+          if (!found) continue;
+          const window = displayWindow(found);
+          edges.push(window.startSec, window.endSec);
+          earliest = Math.min(earliest, window.startSec);
+        }
+        for (const id of movingNotes) {
+          const found = chart?.notes.find((candidate) => candidate.id === id);
+          if (!found) continue;
+          // Every timing point the note has, not just its two ends: a slide is judged
+          // at each of its points, so any of them is a thing an author lines up with.
+          for (const point of slidePoints(found)) edges.push(point.timeSec);
+          earliest = Math.min(earliest, found.timeSec);
+        }
+
+        moveRef.current = {
+          pointerId: event.pointerId,
+          x, y,
+          rawSec: pressSec,
+          lane: 0,
+          baseEdgesSec: edges,
+          earliestMovingSec: Number.isFinite(earliest) ? earliest : 0,
+          candidates: dragCandidates(
+            new Set(movingNotes),
+            new Set(movingDecorations),
+          ),
+          hold: null,
+          moved: false,
+          // A decoration has no lane, so a vertical drag in this row must not become one.
+          lanesLocked: true,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        return;
+      }
+
       if (target && chart) {
         const row = findRow(layout, "notes");
         const hit = row
@@ -561,6 +786,14 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
           }
         }
 
+        // Text is not a note kind, so it never reaches `pointerIntent`. A press with the
+        // text tool held makes a decoration wherever in the chart area it lands, which
+        // saves the author aiming at a thirty-pixel row to start one.
+        if (mode === "edit" && placeTarget === "text") {
+          onPlaceDecoration(target.rawSec);
+          return;
+        }
+
         // What this press means is decided once, from the mode, by a rule that lives
         // outside this component. Nothing below re-reads the gesture.
         const intent = pointerIntent({
@@ -574,19 +807,39 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
 
         switch (intent.kind) {
           case "selectOne": {
-            onSelect(intent.noteId);
             // `hit` is what `pointerIntent` was told about, so this is the note the author
             // pressed rather than a second search that could disagree with it.
             const held = hit?.note;
             if (!held) return;
-            // Selecting one note has just made it the whole selection, so it is the whole
-            // moving set. A set rather than an id because that is the only line a future
-            // multi-note drag would have to widen - and because the magnet must exclude
-            // every note that moves, or a group would catch on its own members.
-            const moving = new Set([held.id]);
-            const edges = [held.timeSec];
-            if (held.endTimeSec !== undefined && held.endTimeSec > held.timeSec) {
-              edges.push(held.endTimeSec);
+
+            // Pressing something already selected keeps the selection and carries all of
+            // it, which is the only way a set built with shift - notes and decorations
+            // together - can be dragged as one. Pressing anything else replaces the
+            // selection with it first, which is what it has always done.
+            const alreadySelected = selectedNoteIds.includes(held.id);
+            if (!alreadySelected) onSelect(held.id);
+            const movingNoteIds = alreadySelected ? selectedNoteIds : [held.id];
+            const movingDecorationIds = alreadySelected ? selectedDecorationIds : [];
+
+            // The magnet must exclude every object that moves, or a group would catch on
+            // its own members and be pulled apart.
+            const moving = new Set(movingNoteIds);
+            const edges: number[] = [];
+            let earliestMoving = Number.POSITIVE_INFINITY;
+            for (const id of movingNoteIds) {
+              const found = chart.notes.find((candidate) => candidate.id === id);
+              if (!found) continue;
+              // Every timing point, so a slide can be aligned by any of its points and
+              // not only by the two ends of it.
+              for (const point of slidePoints(found)) edges.push(point.timeSec);
+              earliestMoving = Math.min(earliestMoving, found.timeSec);
+            }
+            for (const id of movingDecorationIds) {
+              const found = decorations.find((candidate) => candidate.id === id);
+              if (!found) continue;
+              const window = displayWindow(found);
+              edges.push(window.startSec, window.endSec);
+              earliestMoving = Math.min(earliestMoving, window.startSec);
             }
             // Arm a move. Whether this becomes one is decided by whether the pointer
             // actually travels, not by anything about the mode.
@@ -596,7 +849,9 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
               rawSec: target.rawSec,
               lane: target.lane,
               baseEdgesSec: edges,
-              earliestMovingSec: held.timeSec,
+              earliestMovingSec: Number.isFinite(earliestMoving)
+                ? earliestMoving
+                : held.timeSec,
               /**
                * Deliberately not conditioned on the Snap control.
                *
@@ -608,15 +863,14 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
                * control is only drawn in Edit Mode and this gesture only exists in
                * Select Mode.
                *
-               * So the magnet is always live during a drag, and Alt suspends it.
+               * So the magnet is always live during a drag, and Alt suspends it. The
+               * targets themselves come from `dragCandidates`, which every gesture in
+               * this mode shares.
                */
-              candidates: buildMagnetCandidates({
-                beatGrid: snapGrid,
-                notes: chart.notes,
-                excludeNoteIds: moving,
-              }),
+              candidates: dragCandidates(moving, new Set(movingDecorationIds)),
               hold: null,
               moved: false,
+              lanesLocked: false,
             };
             event.currentTarget.setPointerCapture(event.pointerId);
             return;
@@ -624,13 +878,26 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
           case "startResize": {
             const note = chart.notes.find((candidate) => candidate.id === intent.noteId);
             if (!note || note.endTimeSec === undefined) return;
+            // The note being resized is excluded from its own targets, exactly as a moving
+            // one is: a grip that snapped to the edge it was dragging would never move,
+            // and a grip that snapped to the other edge would collapse the note.
             resizeRef.current = {
               pointerId: event.pointerId,
               noteId: intent.noteId,
+              decorationId: null,
+              edge: intent.edge,
+              fixedSec: intent.edge === "start" ? note.endTimeSec : note.timeSec,
+              timeSec: note.timeSec,
               endTimeSec: note.endTimeSec,
+              candidates: dragCandidates(new Set([note.id])),
+              hold: null,
             };
             event.currentTarget.setPointerCapture(event.pointerId);
-            setResizePreview({ noteId: intent.noteId, endTimeSec: note.endTimeSec });
+            setResizePreview({
+              noteId: intent.noteId,
+              timeSec: note.timeSec,
+              endTimeSec: note.endTimeSec,
+            });
             return;
           }
           case "toggleSelected":
@@ -685,7 +952,9 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     [
       view.startSec, current, chart, layout, onSeek, chartTargetAt, onPlace, onSelect,
       hitTargets, onSelectEvent, mode, noteType, snapMode, onToggleSelected,
-      selectedNoteIds, onSnapped, onSelectRun, snapGrid,
+      selectedNoteIds, onSnapped, onSelectRun, dragCandidates,
+      decorations, selectedDecorationIds, placeTarget, onPlaceDecoration,
+      onSelectDecoration, onToggleDecorationSelected, onSelectObjects,
     ],
   );
 
@@ -711,17 +980,47 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         return;
       }
 
-      // Stretching a held note. Only the end moves, and it goes through the same snap a
-      // placement would, so a resized end lands where a placed one would have.
+      // Stretching a held note from one of its grips. The edge being dragged goes through
+      // the same magnet the whole-note move uses, against the same candidates, so a grip
+      // lands on a beat, an Analysis Event or another note's edge indifferently - and
+      // draws the same dotted guide when it does.
       const resizing = resizeRef.current;
       if (resizing) {
-        // The end of a Long is where a sound stops as often as where one starts, so both
-        // edges are candidates here.
-        const resolved = snapEndTime(Math.max(0, xToTime(x, current)));
-        const endTimeSec = Math.max(0, resolved.timeSec);
-        resizeRef.current = { ...resizing, endTimeSec };
-        setResizePreview({ noteId: resizing.noteId, endTimeSec });
-        onSnapped(resolved.anchor);
+        // The other end is fixed, and it is what bounds this one: a hold has to last at
+        // least `MIN_HELD_DURATION_SEC`, so the grip is never offered a candidate that
+        // would invert the note or collapse it to nothing.
+        const snapped = magnetSnapEdge({
+          candidates: resizing.candidates,
+          rawTimeSec: Math.max(0, xToTime(x, current)),
+          ...(() => {
+            const minimum =
+              resizing.decorationId !== null
+                ? MIN_DECORATION_DURATION_SEC
+                : MIN_HELD_DURATION_SEC;
+            return resizing.edge === "start"
+              ? { maxTimeSec: resizing.fixedSec - minimum }
+              : { minTimeSec: resizing.fixedSec + minimum };
+          })(),
+          pixelsPerSecond: current.pixelsPerSecond,
+          // Alt suspends the magnet here for the same reason it does during a move.
+          enabled: !event.altKey,
+          held: resizing.hold,
+        });
+        const next =
+          resizing.edge === "start"
+            ? { timeSec: snapped.timeSec, endTimeSec: resizing.fixedSec }
+            : { timeSec: resizing.fixedSec, endTimeSec: snapped.timeSec };
+        resizeRef.current = { ...resizing, ...next, hold: snapped.hold };
+        if (resizing.decorationId !== null) {
+          setDecorationResize({
+            decorationId: resizing.decorationId,
+            startTimeSec: next.timeSec,
+            endTimeSec: next.endTimeSec,
+          });
+        } else if (resizing.noteId !== null) {
+          setResizePreview({ noteId: resizing.noteId, ...next });
+        }
+        setSnapGuideSec(snapped.guideTimeSec);
         return;
       }
 
@@ -733,9 +1032,10 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         const travelled = Math.hypot(x - moving.x, y - moving.y);
         if (!moving.moved && travelled < MOVE_THRESHOLD_PX) return;
 
-        const lane = row && chart
-          ? (laneAtY(row, chart.laneCount, y) ?? moving.lane)
-          : moving.lane;
+        const lane =
+          moving.lanesLocked || !row || !chart
+            ? moving.lane
+            : (laneAtY(row, chart.laneCount, y) ?? moving.lane);
         // The magnet works on the note, not on the pointer: it is offered how far the
         // hand has travelled and answers with how far the note should go, which is what
         // lets it put an edge *on* something instead of quantising the journey there.
@@ -755,11 +1055,8 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         });
         const lanes = lane - moving.lane;
         moveRef.current = { ...moving, hold: snapped.hold, moved: true };
-        setMoveDelta({
-          seconds: snapped.deltaSec,
-          lanes,
-          guideTimeSec: snapped.guideTimeSec,
-        });
+        setMoveDelta({ seconds: snapped.deltaSec, lanes });
+        setSnapGuideSec(snapped.guideTimeSec);
         return;
       }
 
@@ -783,16 +1080,29 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
       }
 
       const target = chartTargetAt(x, y);
-      // The cursor says when the end of a selected Long can be dragged, so the grip is
-      // discoverable without being drawn on every note in the chart.
-      if (mode === "select" && chart) {
-        const row = findRow(layout, "notes");
-        const hover = row
-          ? hitTestNote(x, y, chart.notes, row, chart.laneCount, current)
+      // The cursor says when a grip can be dragged, so a grip is discoverable without
+      // being drawn on every object in the chart. The same answer for both kinds, because
+      // it is the same gesture and the same cursor.
+      if (mode === "select") {
+        const row = chart ? findRow(layout, "notes") : undefined;
+        const hover =
+          row && chart
+            ? hitTestNote(x, y, chart.notes, row, chart.laneCount, current)
+            : null;
+        const overNoteGrip =
+          (hover?.part === "resizeHandle" || hover?.part === "startHandle") &&
+          selectedNoteIds.includes(hover.note.id);
+
+        const decorationRow = findRow(layout, "decorations");
+        const overDecoration = decorationRow
+          ? hitTestDecoration(x, y, decorations, decorationRow, current)
           : null;
-        setOverHandle(
-          hover?.part === "resizeHandle" && selectedNoteIds.includes(hover.note.id),
-        );
+        const overDecorationGrip =
+          overDecoration !== null &&
+          overDecoration.part !== "body" &&
+          selectedDecorationIds.includes(overDecoration.decoration.id);
+
+        setOverHandle(overNoteGrip || overDecorationGrip);
       } else if (overHandle) {
         setOverHandle(false);
       }
@@ -811,6 +1121,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     [
       view.pixelsPerSecond, current, durationSec, onViewChange, chartTargetAt, snapMode,
       noteType, snapEndTime, layout, chart, mode, selectedNoteIds, overHandle, onSnapped,
+      decorations, selectedDecorationIds,
     ],
   );
 
@@ -836,17 +1147,24 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
       if (band) {
         marqueeRef.current = null;
         setMarquee(null);
+        const rect = rectFromCorners(band.x, band.y, x, y);
         const row = findRow(layout, "notes");
-        if (row && chart) {
-          const caught = notesInRect(
-            rectFromCorners(band.x, band.y, x, y),
-            chart.notes,
-            row,
-            chart.laneCount,
-            current,
-          );
-          onSelectMany(caught.map((note: ChartNote) => note.id), band.add);
-        }
+        const caughtNotes =
+          row && chart
+            ? notesInRect(rect, chart.notes, row, chart.laneCount, current)
+            : [];
+        // The band is one rectangle over one canvas, so a drag that crosses both rows
+        // catches what is in both. Anything else would mean the author had to know which
+        // row they started in, which is not a thing a rubber band should be about.
+        const decorationRow = findRow(layout, "decorations");
+        const caughtDecorations = decorationRow
+          ? decorationsInRect(rect, decorations, decorationRow, current)
+          : [];
+        onSelectObjects(
+          caughtNotes.map((note: ChartNote) => note.id),
+          caughtDecorations.map((decoration: ChartDecoration) => decoration.id),
+          band.add,
+        );
         return;
       }
 
@@ -854,7 +1172,21 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
       if (resizing) {
         resizeRef.current = null;
         setResizePreview(null);
-        onResize(resizing.noteId, resizing.endTimeSec);
+        setDecorationResize(null);
+        setSnapGuideSec(null);
+        // One command for the whole gesture, so the drag is one step in the history
+        // rather than one per pointer move - and the command names the edge that moved,
+        // so undo puts back the end the author actually pulled.
+        if (resizing.decorationId !== null) {
+          if (resizing.edge === "start") {
+            onResizeDecorationStart(resizing.decorationId, resizing.timeSec);
+          } else {
+            onResizeDecorationEnd(resizing.decorationId, resizing.endTimeSec);
+          }
+        } else if (resizing.noteId !== null) {
+          if (resizing.edge === "start") onResizeStart(resizing.noteId, resizing.timeSec);
+          else onResize(resizing.noteId, resizing.endTimeSec);
+        }
         return;
       }
 
@@ -863,6 +1195,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
         moveRef.current = null;
         const delta = moveDelta;
         setMoveDelta(null);
+        setSnapGuideSec(null);
         // A click that never travelled has already done its job: it selected the note.
         if (moving.moved && delta && (delta.seconds !== 0 || delta.lanes !== 0)) {
           onMoveSelected(delta.seconds, delta.lanes);
@@ -890,7 +1223,8 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     },
     [
       current, snapEndTime, onPlaceDragged, onSelectMany, layout, chart, noteType,
-      onResize, onMoveSelected, moveDelta, onSnapped,
+      onResize, onResizeStart, onMoveSelected, moveDelta, onSnapped,
+      decorations, onResizeDecorationStart, onResizeDecorationEnd, onSelectObjects,
     ],
   );
 

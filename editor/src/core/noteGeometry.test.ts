@@ -4,7 +4,7 @@ import type { ChartNote } from "./chart";
 import {
   distanceToNote, hitTestNote, isInstantaneous, isNoteVisible,
   noteGeometry, notesInRect, rectFromCorners, runConnectors, hitTestRunConnector,
-  FLICK_ARROW_PX, MARKER_WIDTH_PX,
+  FLICK_ARROW_PX, MARKER_WIDTH_PX, MIN_GRIP_BODY_PX, RESIZE_HANDLE_PX,
 } from "./noteGeometry";
 import type { Viewport } from "./viewport";
 
@@ -869,5 +869,73 @@ describe("a run of flicks on screen", () => {
       state.notes, ROW, LANES, v,
     );
     expect(caught.map((n) => n.id)).toEqual(["f1", "f2", "f3", "f4"]);
+  });
+});
+
+/**
+ * The two grips on a held note.
+ *
+ * The end grip has always been there. The start grip is its mirror, and the only thing
+ * that distinguishes them is that the start one is withheld on a note too narrow to leave
+ * a body between the two - because a note grippable at both ends and nowhere else could
+ * be stretched but never moved.
+ */
+describe("the grips on a held note", () => {
+  const v = view();
+
+  it("puts one grip on each end, the same size", () => {
+    const g = noteGeometry(hold(11, 13), ROW, LANES, v);
+    expect(g.startHandle).not.toBeNull();
+    expect(g.resizeHandle).not.toBeNull();
+    expect((g.startHandle!.leftPx + g.startHandle!.rightPx) / 2).toBeCloseTo(100, 9);
+    expect((g.resizeHandle!.leftPx + g.resizeHandle!.rightPx) / 2).toBeCloseTo(300, 9);
+    expect(g.startHandle!.rightPx - g.startHandle!.leftPx).toBe(RESIZE_HANDLE_PX);
+    expect(g.resizeHandle!.rightPx - g.resizeHandle!.leftPx).toBe(RESIZE_HANDLE_PX);
+  });
+
+  it("gives an instantaneous note neither grip", () => {
+    const g = noteGeometry(tap(11), ROW, LANES, v);
+    expect(g.startHandle).toBeNull();
+    expect(g.resizeHandle).toBeNull();
+  });
+
+  it("gives a travelling note neither grip", () => {
+    const slide: ChartNote = {
+      id: "s-1", type: "slide", timeSec: 11, endTimeSec: 13, lane: 0, endLane: 3,
+    };
+    const g = noteGeometry(slide, ROW, LANES, v);
+    expect(g.startHandle).toBeNull();
+    expect(g.resizeHandle).toBeNull();
+  });
+
+  it("withholds the start grip on a note too narrow to leave a body", () => {
+    // A hair under the width that would leave three grips' worth to take hold of.
+    const narrow = (MIN_GRIP_BODY_PX - 1) / 100;
+    const g = noteGeometry(hold(11, 11 + narrow), ROW, LANES, v);
+    expect(g.startHandle).toBeNull();
+    // The end grip is not withheld: it is a gesture authors already rely on.
+    expect(g.resizeHandle).not.toBeNull();
+  });
+
+  it("offers the start grip again once the author zooms in", () => {
+    const narrow = (MIN_GRIP_BODY_PX - 1) / 100;
+    const note = hold(11, 11 + narrow);
+    expect(noteGeometry(note, ROW, LANES, view(100)).startHandle).toBeNull();
+    expect(noteGeometry(note, ROW, LANES, view(400)).startHandle).not.toBeNull();
+  });
+
+  it("is what a press near either end lands on", () => {
+    const note = hold(11, 13);
+    const g = noteGeometry(note, ROW, LANES, v);
+    const y = g.markers[0]!.centreYPx;
+    expect(hitTestNote(100, y, [note], ROW, LANES, v)?.part).toBe("startHandle");
+    expect(hitTestNote(300, y, [note], ROW, LANES, v)?.part).toBe("resizeHandle");
+  });
+
+  it("leaves the middle of the body selecting the note", () => {
+    const note = hold(11, 13);
+    const g = noteGeometry(note, ROW, LANES, v);
+    const y = g.markers[0]!.centreYPx;
+    expect(hitTestNote(200, y, [note], ROW, LANES, v)?.part).toBe("body");
   });
 });

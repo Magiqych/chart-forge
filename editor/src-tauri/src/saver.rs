@@ -300,6 +300,74 @@ mod tests {
         EditorState { snap: SnapState { enabled, division } }
     }
 
+    /// A chart carrying every part of a Text Decoration, as the Editor now writes one.
+    ///
+    /// `r##"..."##` rather than `r#"..."#`: the style block holds a colour like `"#fff`,
+    /// and `"#` would close a single-hash raw string in the middle of the JSON.
+    fn chart_with_decorations() -> serde_json::Value {
+        serde_json::from_str(
+            r##"{"version":"0.1.0","audio":{"path":"song.wav"},"timing":{"offsetSec":0},
+                "playfield":{"laneCount":5},
+                "notes":[{"id":"n-0001","type":"tap","timeSec":1.0,"lane":2}],
+                "decorations":[
+                  {"id":"dec-0001","type":"text","startTimeSec":1.0,"endTimeSec":2.75,
+                   "text":"キラメキ☆",
+                   "position":{"x":0.5,"y":0.45},
+                   "style":{"fontSize":0.12,"color":"#ffffff"},
+                   "animation":{"enter":"scale","enterDurationSec":0.12},
+                   "zIndex":20},
+                  {"id":"dec-0002","type":"image","startTimeSec":5.0,
+                   "position":{"x":0.25,"y":0.75}}
+                ]}"##,
+        )
+        .unwrap()
+    }
+
+    /// Decorations reach the disk untouched.
+    ///
+    /// This module takes the chart as an opaque `serde_json::Value` and writes it back
+    /// verbatim, so nothing here can drop a field it has never heard of - not a
+    /// decoration, not a decoration *kind* it does not know, and not whatever a later
+    /// contract adds. The test pins that property rather than the current field list,
+    /// because the value of the opaque handling is precisely that it needs no updating.
+    #[test]
+    fn writes_decorations_through_untouched() {
+        let root = temp_dir("decorations");
+        let project = root.join("song.project.json");
+        write(&project, r#"{"version":"0.1.0","audio":{"path":"song.wav"}}"#);
+
+        let sent = chart_with_decorations();
+        let saved =
+            save_chart(project.to_str().unwrap(), sent.clone(), snap_on()).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&saved.chart_path).unwrap()).unwrap();
+        assert_eq!(written, sent, "the chart on disk must be what was handed over");
+
+        let decorations = written["decorations"].as_array().unwrap();
+        assert_eq!(decorations.len(), 2);
+        assert_eq!(decorations[0]["text"], "キラメキ☆");
+        assert_eq!(decorations[0]["style"]["fontSize"], 0.12);
+        assert_eq!(decorations[0]["animation"]["enter"], "scale");
+        // A kind this version has never heard of survives with everything it came with.
+        assert_eq!(decorations[1]["type"], "image");
+        assert_eq!(decorations[1]["position"]["y"], 0.75);
+    }
+
+    /// A chart with no decorations gains none on the way to disk.
+    #[test]
+    fn does_not_invent_a_decorations_key() {
+        let root = temp_dir("no-decorations");
+        let project = root.join("song.project.json");
+        write(&project, r#"{"version":"0.1.0","audio":{"path":"song.wav"}}"#);
+
+        let saved =
+            save_chart(project.to_str().unwrap(), chart(NOTE), snap_on()).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&saved.chart_path).unwrap()).unwrap();
+        assert!(written.get("decorations").is_none());
+    }
+
     #[test]
     fn writes_a_new_chart_beside_the_project_and_records_it() {
         let root = temp_dir("new-chart");

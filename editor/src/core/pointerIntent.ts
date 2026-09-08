@@ -17,6 +17,9 @@
 import { isBoundedPlaceable, type EditorMode, type PlaceableType } from "./chart";
 import type { NotePart } from "./noteGeometry";
 
+/** Which end of a held note a grip belongs to. */
+export type ResizeEdge = "start" | "end";
+
 export type PointerIntent =
   /**
    * Replace the selection with this one note, and be ready to move it.
@@ -26,8 +29,15 @@ export type PointerIntent =
    * selected either way, and a drag simply carries the selection with it.
    */
   | { readonly kind: "selectOne"; readonly noteId: string }
-  /** Take hold of the grip at the end of a held note. */
-  | { readonly kind: "startResize"; readonly noteId: string }
+  /**
+   * Take hold of one of the grips on a held note.
+   *
+   * Which end is carried in `edge` rather than split into two intents, because everything
+   * downstream does the same thing with either: it snaps one time and leaves the other
+   * alone. Two intents would be two paths through the same gesture, and the second one
+   * would be the one that stopped snapping.
+   */
+  | { readonly kind: "startResize"; readonly noteId: string; readonly edge: ResizeEdge }
   /** Add this note to the selection, or drop it if it was already there. */
   | { readonly kind: "toggleSelected"; readonly noteId: string }
   /** Begin a rubber band. `add` keeps whatever was already selected. */
@@ -50,8 +60,8 @@ export interface PointerContext {
   /**
    * Whether that note is already selected.
    *
-   * The resize grip is only drawn on a selected note, so it is only grippable on one:
-   * a handle you cannot see must not be a handle you can accidentally grab.
+   * The resize grips are only drawn on a selected note, so they are only grippable on
+   * one: a handle you cannot see must not be a handle you can accidentally grab.
    */
   readonly hitSelected: boolean;
   readonly shiftKey: boolean;
@@ -65,8 +75,12 @@ export function pointerIntent(context: PointerContext): PointerIntent {
     // however far the pointer travels.
     if (hitNoteId !== null) {
       if (shiftKey) return { kind: "toggleSelected", noteId: hitNoteId };
-      if (hitPart === "resizeHandle" && hitSelected) {
-        return { kind: "startResize", noteId: hitNoteId };
+      if (hitSelected && (hitPart === "resizeHandle" || hitPart === "startHandle")) {
+        return {
+          kind: "startResize",
+          noteId: hitNoteId,
+          edge: hitPart === "startHandle" ? "start" : "end",
+        };
       }
       return { kind: "selectOne", noteId: hitNoteId };
     }

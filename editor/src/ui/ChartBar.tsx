@@ -8,8 +8,8 @@
  */
 
 import {
-  EDITOR_MODES, FLICK_DIRECTIONS, isBoundedPlaceable, PLACEABLE_TYPES,
-  type EditorMode, type FlickDirection, type PlaceableType,
+  EDITOR_MODES, FLICK_DIRECTIONS, isBoundedPlaceable, PLACEABLE_TYPES, PLACE_TARGETS,
+  type EditorMode, type FlickDirection, type PlaceableType, type PlaceTarget,
 } from "../core/chart";
 
 /**
@@ -65,6 +65,16 @@ const DIRECTION_LABELS: Readonly<Record<FlickDirection, string>> = {
 
 import { SNAP_DIVISIONS, type SnapMode, type SnapSettings } from "../core/snap";
 
+const PLACE_TARGET_LABELS: Readonly<Record<PlaceTarget, string>> = {
+  note: "Note",
+  text: "Text",
+};
+
+const PLACE_TARGET_HINTS: Readonly<Record<PlaceTarget, string>> = {
+  note: "Click a lane to place a note",
+  text: "Click the timeline or the stage to add a text decoration",
+};
+
 export interface ChartBarProps {
   readonly enabled: boolean;
   readonly noteCount: number;
@@ -83,6 +93,14 @@ export interface ChartBarProps {
   readonly onMode: (mode: EditorMode) => void;
   readonly noteType: PlaceableType;
   readonly onNoteType: (type: PlaceableType) => void;
+  /**
+   * What Edit Mode makes: a note, or a text decoration.
+   *
+   * Beside the note kind rather than inside it. A decoration is not a fifth kind of note,
+   * and putting it in the same dropdown would have said that it was.
+   */
+  readonly placeTarget: PlaceTarget;
+  readonly onPlaceTarget: (target: PlaceTarget) => void;
   readonly direction: FlickDirection;
   readonly onDirection: (direction: FlickDirection) => void;
   /** How the next Long or Slide will finish. `null` is an ordinary release. */
@@ -119,7 +137,8 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
   const {
     enabled, noteCount, dirty, saving, onSave, saveMessage,
     canUndo, canRedo, onUndo, onRedo,
-    mode, onMode, noteType, onNoteType, direction, onDirection, endFlick, onEndFlick,
+    mode, onMode, noteType, onNoteType, placeTarget, onPlaceTarget,
+    direction, onDirection, endFlick, onEndFlick,
     snap, onSnap, snapMode, onSnapMode, snapAvailable,
     selectionCount, onDeleteSelected, canConnect, connectHint, onConnect, targetPath,
     selectedEventLabel, eventLane, onEventLane, laneCount, onPlaceAtEvent,
@@ -187,10 +206,31 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
         ))}
       </div>
 
+      {/* Which of the two things Edit Mode makes. A segmented pair for the same reason
+          the mode is one: it changes what every click means, so it has to be readable at
+          a glance rather than hidden inside a dropdown of note kinds. */}
+      {mode === "edit" && (
+        <div className="segmented" role="group" aria-label="Place">
+          {PLACE_TARGETS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={value === placeTarget ? "seg on" : "seg"}
+              onClick={() => onPlaceTarget(value)}
+              disabled={!enabled}
+              title={PLACE_TARGET_HINTS[value]}
+              aria-pressed={value === placeTarget}
+            >
+              {PLACE_TARGET_LABELS[value]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* What Edit Mode places. Hidden rather than disabled in Select Mode: a control
           that cannot do anything is noise, and Select has nothing to say about which
           kind of note it is not placing. */}
-      {mode === "edit" && (
+      {mode === "edit" && placeTarget === "note" && (
         <label className="field" title={NOTE_HINTS[noteType]}>
           Note
           <select
@@ -205,7 +245,7 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
         </label>
       )}
 
-      {mode === "edit" && noteType === "flick" && (
+      {mode === "edit" && placeTarget === "note" && noteType === "flick" && (
         <div className="segmented" role="group" aria-label="Flick direction">
           {FLICK_DIRECTIONS.map((value) => (
             <button
@@ -224,7 +264,7 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
       )}
 
       {/* Only a note with an end can finish with anything other than a release. */}
-      {mode === "edit" && isBoundedPlaceable(noteType) && (
+      {mode === "edit" && placeTarget === "note" && isBoundedPlaceable(noteType) && (
         <div className="segmented" role="group" aria-label="End action">
           {END_ACTION_CHOICES.map((choice) => (
             <button
@@ -322,7 +362,7 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
           <span className="chartbar-selection">
             {selectionCount === 0
               ? "nothing selected"
-              : `${selectionCount} note${selectionCount === 1 ? "" : "s"} selected`}
+              : `${selectionCount} object${selectionCount === 1 ? "" : "s"} selected`}
           </span>
           {/* Joining two points into a slide. Shown whenever two notes are selected, and
               enabled only when they are two points that can actually be joined - with the
@@ -344,8 +384,8 @@ export function ChartBar(props: ChartBarProps): React.JSX.Element {
             disabled={!enabled || selectionCount === 0}
             title={
               selectionCount === 0
-                ? "Click or drag over notes first"
-                : `Delete ${selectionCount} selected note${selectionCount === 1 ? "" : "s"} (Delete)`
+                ? "Click or drag over notes or text first"
+                : `Delete ${selectionCount} selected object${selectionCount === 1 ? "" : "s"} (Delete)`
             }
           >
             Delete Selected

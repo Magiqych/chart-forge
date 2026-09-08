@@ -1,5 +1,5 @@
 {
-  "description": "Negative fixtures. Each case names the documents to validate together and the exact set of problem codes the contract test must report for them - no more and no fewer. Document paths are relative to the repository root, so a case can pair a broken fixture with a good example. See tests/README.md.",
+  "description": "Fixtures for the contract test. Each case names the documents to validate together and the exact set of problem codes the test must report for them - no more and no fewer, so a case whose 'expect' is empty is a document that must pass every check. Document paths are relative to the repository root, so a case can pair a broken fixture with a good example. See tests/README.md.",
   "cases": [
     {
       "name": "malformed JSON",
@@ -213,6 +213,71 @@
       "name": "chart: a note is connected onwards twice",
       "expect": ["chart/connection-branches"],
       "documents": { "chart": "tests/fixtures/invalid/chart-connection-branches.json" }
+    },
+    {
+      "name": "chart: two decorations share an id",
+      "expect": ["chart/duplicate-decoration-id"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-duplicate-decoration-id.json" }
+    },
+    {
+      "name": "chart: a decoration ends when it starts",
+      "expect": ["chart/decoration-end-not-after-start"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decoration-end-not-after-start.json" }
+    },
+    {
+      "name": "chart: a text decoration has no text",
+      "expect": ["chart/text-decoration-missing-text"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-text-decoration-missing-text.json" }
+    },
+    {
+      "name": "chart: decorations are out of order",
+      "expect": ["chart/decorations-not-ascending"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decorations-not-ascending.json" }
+    },
+    {
+      "name": "chart: a decoration sits outside the playfield",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decoration-position-out-of-range.json" }
+    },
+    {
+      "name": "chart: a decoration is more than fully opaque",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decoration-opacity-out-of-range.json" }
+    },
+    {
+      "name": "chart: a decoration asks for an animation this version does not define",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decoration-unknown-animation.json" }
+    },
+    {
+      "name": "chart: a decoration carries a field the contract does not define",
+      "expect": ["schema/invalid"],
+      "documents": { "chart": "tests/fixtures/invalid/chart-decoration-unknown-field.json" }
+    },
+    {
+      "name": "chart: no decorations at all, as in every chart written before them",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-no-decorations.json" }
+    },
+    {
+      "name": "chart: the decoration list is present and empty",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decorations-empty.json" }
+    },
+    {
+      "name": "chart: the least a text decoration may say",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-minimal.json" }
+    },
+    {
+      "name": "chart: every field a text decoration may say",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-full.json" }
+    },
+    {
+      "name": "chart: a decoration kind this version has never heard of",
+      "expect": [],
+      "documents": { "chart": "tests/fixtures/valid/chart-decoration-unknown-kind.json" }
     }
   ]
 }

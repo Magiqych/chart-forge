@@ -7,7 +7,8 @@ import {
   chartOf, clearSelection, connect, connectableSelection, connectFlickRun, disconnect,
   disconnectableRun, disconnectFlickRun, isChartDirty,
   isDirty, isSelected, markChartSaved, markSaveFailed, markSaved, moveSelected,
-  openSession, place, placeAtEvent, redo, remove, removeSelected, resize, select,
+  openSession, place, placeAtEvent, redo, remove, removeSelected, resize, resizeStart,
+  select,
   selectAt, selectEvent, selectionCount, selectMany, setSnap, setSnapMode, soleSelectedId,
   toggleSelected, undo,
 } from "./editorSession";
@@ -710,7 +711,10 @@ describe("the session holds no audio or viewport state", () => {
 
   it("carries only the chart, its history, the snap settings and the selections", () => {
     expect(Object.keys(fresh()).sort()).toEqual(
-      ["history", "projectDirty", "selectedEventId", "selectedNoteIds", "snap", "snapMode"],
+      [
+        "history", "projectDirty", "selectedDecorationIds", "selectedEventId",
+        "selectedNoteIds", "snap", "snapMode",
+      ],
     );
   });
 
@@ -1080,6 +1084,37 @@ describe("resizing through the session", () => {
   it("records nothing when the end does not move", () => {
     const session = held();
     expect(resize(session, "n-0001", 2)).toBe(session);
+  });
+});
+
+describe("moving a held note's start through the session", () => {
+  const held = () => place(fresh(), { timeSec: 1, lane: 0, type: "hold", endTimeSec: 4 });
+
+  it("changes only the start", () => {
+    const note = chartOf(resizeStart(held(), "n-0001", 2)).notes[0];
+    expect(note?.timeSec).toBe(2);
+    expect(note?.endTimeSec).toBe(4);
+  });
+
+  it("is one history step, so one undo restores both times", () => {
+    const after = resizeStart(held(), "n-0001", 2);
+    expect(chartOf(undo(after)).notes[0]?.timeSec).toBe(1);
+    expect(chartOf(undo(after)).notes[0]?.endTimeSec).toBe(4);
+    expect(chartOf(redo(undo(after))).notes[0]?.timeSec).toBe(2);
+  });
+
+  it("records nothing when the start does not move", () => {
+    const session = held();
+    expect(resizeStart(session, "n-0001", 1)).toBe(session);
+  });
+
+  it("is a separate step from a drag of the other grip", () => {
+    // Two grips, two edits: undoing the second must leave the first standing.
+    let session = resizeStart(held(), "n-0001", 2);
+    session = resize(session, "n-0001", 5);
+    const back = undo(session);
+    expect(chartOf(back).notes[0]?.timeSec).toBe(2);
+    expect(chartOf(back).notes[0]?.endTimeSec).toBe(4);
   });
 });
 

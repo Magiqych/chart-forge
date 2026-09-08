@@ -149,6 +149,71 @@ body {
 
 .stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
+/* The playfield preview: where a decoration's position is seen and edited.
+
+   A fixed band above the timeline rather than a floating window. The timeline keeps the
+   rest of the height, because reading time is still the main thing this Editor is for,
+   and the stage only has to be big enough to aim a caption in. */
+.stage-panel {
+  flex: 0 0 190px;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+  background: #101319;
+}
+
+.stage-canvas { display: block; touch-action: none; }
+
+/* The decoration inspector. Grouped rather than a flat column of sixteen inputs: the
+   sidebar is 180px wide, and everything below has to fit that without wrapping. */
+.dec-group { border-top: 1px solid var(--border); padding: 4px 0; }
+.dec-group > summary {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 2px 0;
+}
+.dec-group[open] > summary { color: #b9c6d6; }
+
+.dec-field {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.dec-label { font-size: 11px; color: var(--muted); }
+.dec-field input,
+.dec-field select {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  color: inherit;
+  background: #0e1219;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.dec-field input[type="color"] { padding: 0; height: 20px; }
+
+.dec-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: #0e1219;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px;
+}
+
+.dec-note { font-size: 10px; color: var(--muted); margin: 4px 0 2px; line-height: 1.4; }
+
+
 .timeline-host { flex: 1; min-height: 0; overflow: hidden; }
 
 /* The two canvases are stacked, so the chart layer repaints without the overlay. */

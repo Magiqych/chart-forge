@@ -17,6 +17,10 @@
 
 import type { ChartNote, ChartState, Direction } from "../core/chart";
 import { findRow, laneBand, type Layout } from "../core/lanes";
+import { isTextDecoration, type ChartDecoration } from "../core/decoration";
+import {
+  decorationRowGeometry, type DecorationRowGeometry,
+} from "../core/decorationGeometry";
 import {
   isNoteVisible, noteGeometry, noteMarginSec, runConnectors,
   type NoteArrow, type NoteBody, type NoteBox, type NoteConnector, type NoteGeometry,
@@ -50,15 +54,19 @@ export interface PlacementPreview {
 export interface MoveDelta {
   readonly seconds: number;
   readonly lanes: number;
-  /**
-   * Where the magnet has taken the note, or null while the move is free.
-   *
-   * Deliberately part of the move rather than a scene field of its own. The guide only
-   * has a meaning while this drag is happening, and keeping the two in one value means
-   * there is no second piece of state that could survive the drag and leave a line on
-   * screen pointing at nothing.
-   */
-  readonly guideTimeSec: number | null;
+}
+
+/**
+ * A held note whose start or end is being dragged.
+ *
+ * Both times, always, rather than only the one that is moving. The renderer then draws
+ * the note from a pair of numbers without having to know which grip was taken, and the
+ * two grips cannot end up drawn by two slightly different rules.
+ */
+export interface ResizePreview {
+  readonly noteId: string;
+  readonly timeSec: number;
+  readonly endTimeSec: number;
 }
 
 export interface NotesScene {
@@ -70,8 +78,36 @@ export interface NotesScene {
   readonly marquee: SelectionRect | null;
   readonly preview: PlacementPreview | null;
   readonly moveDelta: MoveDelta | null;
-  /** A held note whose end is being dragged. Drawing only, like `moveDelta`. */
-  readonly resizePreview: { readonly noteId: string; readonly endTimeSec: number } | null;
+  /** A held note whose start or end is being dragged. Drawing only, like `moveDelta`. */
+  readonly resizePreview: ResizePreview | null;
+  /**
+   * Where the magnet has taken whatever is being dragged, or null while it is free.
+   *
+   * One field for every gesture and every kind of candidate. A beat, an Analysis Event
+   * and the edge of another note all arrive here as the same number, so the author is
+   * shown the same dotted line whatever they lined up with - and a gesture added later
+   * gets the guide by filling this in rather than by teaching the renderer about itself.
+   *
+   * It lives on the scene rather than inside one gesture's preview because more than one
+   * gesture now has a magnet. The caller clears it wherever it clears the gesture, so it
+   * still cannot outlive the drag that produced it.
+   */
+  readonly snapGuideTimeSec: number | null;
+  /**
+   * The decorations, and which of them are selected.
+   *
+   * A separate list from the notes on the canvas as well as in the document, because
+   * they are drawn in their own row by their own rules and nothing about a decoration is
+   * ever mixed into a note's geometry.
+   */
+  readonly decorations: readonly ChartDecoration[];
+  readonly selectedDecorationIds: readonly string[];
+  /** A decoration's window being dragged. Drawing only, like `moveDelta`. */
+  readonly decorationResizePreview: {
+    readonly decorationId: string;
+    readonly startTimeSec: number;
+    readonly endTimeSec: number;
+  } | null;
   readonly playheadSec: number;
 }
 
@@ -117,6 +153,10 @@ export class NotesRenderer {
       drawnNotes = this.drawNotes(scene, row);
       this.drawPreview(scene, row);
     }
+    // After the notes and before everything that explains a gesture. The decorations sit
+    // in their own row, so this is an ordering statement rather than an overlap: the row
+    // is painted once, in one place, and nothing else on this canvas draws into it.
+    this.drawDecorations(scene);
     this.drawMarquee(scene);
     // In front of the notes it is explaining, behind the playhead, which is the one thing
     // on this canvas that must never be obscured.
@@ -124,6 +164,93 @@ export class NotesRenderer {
     this.drawPlayhead(scene);
 
     return { drawnNotes, millis: performance.now() - started };
+  }
+
+  /**
+   * The decorations, as bars along their own row.
+   *
+   * A bar rather than the styled text the stage shows, because this row answers "when",
+   * and a rotated, coloured, half-transparent caption would be answering a question the
+   * timeline is not asking. The text is written inside the bar so the row can be read at
+   * a glance, and everything about how it will actually look belongs to the stage.
+   *
+   * A decoration in a kind this Editor cannot draw still gets a bar, labelled with its
+   * kind: it is in the document, it occupies that stretch of time, and hiding it would be
+   * the surest way for an author to save over something they never knew was there.
+   */
+  private drawDecorations(scene: NotesScene): number {
+    const row = findRow(scene.layout, "decorations");
+    if (!row || scene.decorations.length === 0) return 0;
+
+    const { ctx } = this;
+    const selected = new Set(scene.selectedDecorationIds);
+    let drawn = 0;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, row.topPx, scene.view.widthPx, row.heightPx);
+    ctx.clip();
+
+    for (const decoration of scene.decorations) {
+      const shown = pendingDecoration(decoration, scene);
+      const geometry = decorationRowGeometry(shown, row, scene.view);
+      if (geometry.rightPx < 0 || geometry.leftPx > scene.view.widthPx) continue;
+      this.drawDecorationBar(shown, geometry, selected.has(decoration.id));
+      drawn += 1;
+    }
+
+    ctx.restore();
+    return drawn;
+  }
+
+  private drawDecorationBar(
+    decoration: ChartDecoration,
+    geometry: DecorationRowGeometry,
+    selected: boolean,
+  ): void {
+    const { ctx } = this;
+    const width = geometry.rightPx - geometry.leftPx;
+    const height = geometry.bottomPx - geometry.topPx;
+
+    ctx.fillStyle = selected ? theme.decoration.selectedFill : theme.decoration.fill;
+    ctx.fillRect(geometry.leftPx, geometry.topPx, width, height);
+    ctx.strokeStyle = selected ? theme.decoration.selectedBorder : theme.decoration.border;
+    ctx.lineWidth = selected ? 2 : 1;
+    ctx.strokeRect(
+      Math.round(geometry.leftPx) + 0.5,
+      Math.round(geometry.topPx) + 0.5,
+      Math.round(width) - 1,
+      Math.round(height) - 1,
+    );
+
+    if (selected && geometry.startHandle && geometry.endHandle) {
+      ctx.fillStyle = theme.decoration.handle;
+      for (const handle of [geometry.startHandle, geometry.endHandle]) {
+        ctx.fillRect(
+          handle.leftPx,
+          handle.topPx,
+          handle.rightPx - handle.leftPx,
+          handle.bottomPx - handle.topPx,
+        );
+      }
+    }
+
+    // What it says, or what kind it is when this Editor cannot say what it says.
+    const label = isTextDecoration(decoration)
+      ? (decoration.text ?? "")
+      : `<${decoration.type}>`;
+    if (label === "" || width < 16) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(geometry.leftPx + 3, geometry.topPx, width - 6, height);
+    ctx.clip();
+    ctx.fillStyle = selected ? theme.decoration.selectedLabel : theme.decoration.label;
+    ctx.font = theme.decoration.labelFont;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(label, geometry.leftPx + 5, (geometry.topPx + geometry.bottomPx) / 2);
+    ctx.restore();
   }
 
   /** Lane separators and labels, so a lane is something the author can aim at. */
@@ -239,6 +366,7 @@ export class NotesRenderer {
     for (const connector of geometry.connectors) this.drawConnector(connector, selected);
     if (geometry.body) this.drawBody(note, geometry.body, selected);
     if (geometry.resizeHandle) this.drawResizeHandle(geometry.resizeHandle, selected);
+    if (geometry.startHandle) this.drawResizeHandle(geometry.startHandle, selected);
 
     for (const marker of geometry.markers) this.drawMarker(note, marker, selected);
     if (geometry.arrow) this.drawFlickArrow(note, geometry.arrow, selected);
@@ -488,8 +616,8 @@ export class NotesRenderer {
    * follow the alignment down through the analysis overlay to the note itself.
    */
   private drawSnapGuide(scene: NotesScene): void {
-    const timeSec = scene.moveDelta?.guideTimeSec;
-    if (timeSec === undefined || timeSec === null) return;
+    const timeSec = scene.snapGuideTimeSec;
+    if (timeSec === null) return;
 
     const x = timeToX(timeSec, scene.view);
     if (x < 0 || x > scene.view.widthPx) return;
@@ -615,12 +743,16 @@ export const DIRECTION_VECTORS: Readonly<Record<string, { readonly x: number; re
  *
  * Returns the note itself when nothing is being dragged, so the common case allocates
  * nothing. A move carries both ends together - dragging a Long moves it rather than
- * stretching it - and a resize touches only the end, which is the difference between the
- * body and the grip.
+ * stretching it - and a resize moves one end while the other stays exactly where it was,
+ * which is the difference between the body and a grip.
  */
 function pendingEdit(note: ChartNote, scene: NotesScene, selected: boolean): ChartNote {
   if (scene.resizePreview && scene.resizePreview.noteId === note.id) {
-    return { ...note, endTimeSec: scene.resizePreview.endTimeSec };
+    return {
+      ...note,
+      timeSec: scene.resizePreview.timeSec,
+      endTimeSec: scene.resizePreview.endTimeSec,
+    };
   }
   if (!selected || !scene.moveDelta) return note;
   const { seconds, lanes } = scene.moveDelta;
@@ -638,6 +770,38 @@ function pendingEdit(note: ChartNote, scene: NotesScene, selected: boolean): Cha
             lane: point.lane + lanes,
           })),
         }
+      : {}),
+  };
+}
+
+/**
+ * The decoration as it currently looks, with any window drag applied.
+ *
+ * The same arrangement as `pendingEdit` for a note, and separate from it for the same
+ * reason the objects are separate: a decoration has no lane and no waypoints, and a
+ * function that handled both would have to keep asking which it was looking at.
+ */
+function pendingDecoration(
+  decoration: ChartDecoration,
+  scene: NotesScene,
+): ChartDecoration {
+  const preview = scene.decorationResizePreview;
+  if (preview && preview.decorationId === decoration.id) {
+    return {
+      ...decoration,
+      startTimeSec: preview.startTimeSec,
+      endTimeSec: preview.endTimeSec,
+    };
+  }
+  if (!scene.moveDelta) return decoration;
+  if (!scene.selectedDecorationIds.includes(decoration.id)) return decoration;
+  const { seconds } = scene.moveDelta;
+  if (seconds === 0) return decoration;
+  return {
+    ...decoration,
+    startTimeSec: decoration.startTimeSec + seconds,
+    ...(decoration.endTimeSec !== undefined
+      ? { endTimeSec: decoration.endTimeSec + seconds }
       : {}),
   };
 }
