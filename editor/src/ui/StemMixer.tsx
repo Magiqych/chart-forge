@@ -11,7 +11,7 @@
  */
 
 import {
-  ORIGINAL_TRACK_ID, describeListening, isRouted,
+  ORIGINAL_TRACK_ID, anyStemRouted, describeListening, isOriginalAudible, isRouted,
   type MixerState, type StemAvailability,
 } from "../core/stemMixer";
 import type { StemLoadStatus } from "../audio/stemEngine";
@@ -70,11 +70,7 @@ function Row(
   // What is audible, not merely what is selected: the original is routed while a stem
   // plays, and showing it lit would be the panel contradicting the loudspeakers.
   const audible =
-    id === ORIGINAL_TRACK_ID
-      ? isRouted(mixer, id) && !Object.keys(mixer.tracks).some(
-          (other) => other !== ORIGINAL_TRACK_ID && isRouted(mixer, other),
-        )
-      : isRouted(mixer, id);
+    id === ORIGINAL_TRACK_ID ? isOriginalAudible(mixer) : isRouted(mixer, id);
 
   return (
     <li className={`stem-row${audible ? " audible" : ""}${disabled ? " disabled" : ""}`}>
@@ -130,7 +126,10 @@ export function StemMixer(
   for (const stem of stems) labels[stem.id] = stem.label;
 
   const listening = describeListening(mixer, labels);
-  const onlyOriginal = listening === "Original";
+  // Asked of the mixer, not read back out of the sentence above: a panel that decided
+  // what its buttons do by matching a display string would break the day that string
+  // was reworded.
+  const onlyOriginal = !anyStemRouted(mixer);
 
   return (
     <div className="stem-mixer">
