@@ -10,10 +10,16 @@ Two rules from the contract are enforced here rather than left to callers:
 * `events[]` is ordered by (startSec, id) - a total order, whose tie-break carries no
   musical meaning and exists only so the document is reproducible.
 
-`confidence` is deliberately never emitted. Beat This! logits, torchcrepe periodicity and
-librosa onset strength are three uncalibrated and mutually incomparable scales; writing
-any of them into one `confidence` field would make a filter like `confidence > 0.5` mean
-something different for every event type. Absent means unknown, which is honest.
+`confidence` is emitted only where it has a stated meaning. Beat This! logits, torchcrepe
+periodicity and librosa onset strength are three uncalibrated and mutually incomparable
+scales; writing any of them into one `confidence` field would make a filter like
+`confidence > 0.5` mean something different for every event type, so those branches emit
+nothing and absent goes on meaning unknown.
+
+The plucked-string branch is the exception, and it is an exception because it has a
+definition rather than a score: `(peak - local background) / peak`, the fraction of a
+transient that stands above the passage around it, bounded in 0..1 and comparable between
+events and between documents. A consumer filtering on it is filtering on that sentence.
 """
 
 from __future__ import annotations
@@ -32,6 +38,12 @@ GENERATOR_NAME = "chart-forge-analyzer"
 DETECTOR_BEAT = "det-beat-this"
 DETECTOR_PITCH = "det-torchcrepe"
 DETECTOR_ONSET = "det-librosa-onset"
+
+#: Guitar and piano share a detector because they pose the same problem: a struck or
+#: plucked string, where a chord is one event smeared over tens of milliseconds. One entry
+#: rather than two, because they are one algorithm with one set of parameters, and two
+#: would imply a distinction the Analyzer is not making.
+DETECTOR_PLUCK = "det-pluck-onset"
 
 #: An event's end semantics follow from what kind of thing it is.
 END_KIND_BY_TYPE = {
@@ -87,22 +99,53 @@ def hz_to_note_name(hz: float) -> str:
     return str(librosa.hz_to_note(float(hz)))
 
 
-def make_onset_event(branch, index, event_type, start_sec, stem_id, strength) -> dict:
-    """A point-like event: percussion from the drums stem, or a generic onset."""
+def make_onset_event(branch, index, event_type, start_sec, stem_id, strength, *,
+                     detector_id=DETECTOR_ONSET, instrument=None, confidence=None,
+                     score_kind="onset-strength") -> dict:
+    """A point-like event: a percussion hit, a generic onset, or a plucked-string attack.
+
+    One builder for all three because they are the same shape - a moment, a stem, and a
+    raw score - and the differences between them are values, not structure. `confidence`
+    is passed only by a branch that has the definition to back it; omitting it is the
+    contract's way of saying unknown, so it is left out rather than defaulted.
+    """
     kind = END_KIND_BY_TYPE[event_type]
     if kind != "instantaneous":
         raise ValueError("{0!r} is not a point-like event type".format(event_type))
-    return {
+
+    source = {"stemId": stem_id}
+    if instrument is not None:
+        source["instrument"] = instrument
+
+    event = {
         "id": event_id(branch, index),
         "type": event_type,
-        "detectorId": DETECTOR_ONSET,
+        "detectorId": detector_id,
         "endKind": kind,
         "startSec": _round(start_sec, _ROUND_TIME),
-        "source": {"stemId": stem_id},
+        "source": source,
         "metadata": {
-            "rawScore": {"kind": "onset-strength", "value": _round(strength, _ROUND_SCORE)},
+            "rawScore": {"kind": score_kind, "value": _round(strength, _ROUND_SCORE)},
         },
     }
+    if confidence is not None:
+        event["confidence"] = _confidence(confidence)
+    return event
+
+
+def _confidence(value) -> float:
+    """Round a confidence, refusing anything outside the range the contract states.
+
+    A clamp would hide the bug; the schema says 0..1 and a detector that produced 1.4 has
+    something wrong with it that the author should hear about now, not by wondering why a
+    filter behaves oddly.
+    """
+    number = _round(value, _ROUND_SCORE)
+    if not 0.0 <= number <= 1.0:
+        raise ValueError(
+            "confidence must lie in 0..1 as the contract requires, got {0!r}".format(value)
+        )
+    return number
 
 
 def make_pitch_run_event(branch, index, start_sec, end_sec, stem_id, instrument,
@@ -161,9 +204,9 @@ def make_pitch_run_event(branch, index, start_sec, end_sec, stem_id, instrument,
     }
 
 
-def build_detectors(pitch_module, onset_module, beat_module) -> List[dict]:
+def build_detectors(pitch_module, onset_module, beat_module, pluck_module=None) -> List[dict]:
     """The registry every beat and event refers to, instead of repeating itself."""
-    return [
+    detectors = [
         {
             "id": DETECTOR_BEAT,
             "name": beat_module.PACKAGE,
@@ -209,6 +252,14 @@ def build_detectors(pitch_module, onset_module, beat_module) -> List[dict]:
             },
         },
     ]
+    if pluck_module is not None:
+        detectors.append({
+            "id": DETECTOR_PLUCK,
+            "name": "chart-forge pluck onset (librosa.onset envelope)",
+            "version": pluck_module.VERSION,
+            "parameters": pluck_module.parameters(),
+        })
+    return detectors
 
 
 def build_separation_provenance(separation_result, separation_module) -> dict:
@@ -224,6 +275,7 @@ def build_separation_provenance(separation_result, separation_module) -> dict:
         return {
             "mode": "supplied",
             "stemsDir": str(separation_result.stems_dir),
+            "stems": list(separation_result.stem_paths),
             "separationRun": False,
             "note": "stems were pinned and reused; htdemucs did not run, and the "
                     "Analyzer cannot verify which tool produced them",
@@ -233,7 +285,8 @@ def build_separation_provenance(separation_result, separation_module) -> dict:
         "separationRun": True,
         "package": separation_module.PACKAGE,
         "version": separation_module.VERSION,
-        "model": separation_module.MODEL,
+        "model": separation_result.model or separation_module.MODEL,
+        "stems": list(separation_result.stem_paths),
         "device": "cuda:0",
         "note": "htdemucs is not bit-reproducible on the same GPU with the same input; "
                 "pin the stems to remove that variable",
@@ -253,10 +306,15 @@ def build_document(*, analyzer_version, audio_info, stems, detectors, beat_times
             "parameters": {
                 "separation": separation_provenance,
                 "confidencePolicy": {
-                    "emitted": False,
+                    "emitted": "plucked-string onsets only",
+                    "definition": "(peak - local median background) / peak, in 0..1: the "
+                                  "fraction of a transient standing above the passage "
+                                  "around it",
                     "reason": "Beat This! logits, torchcrepe periodicity and librosa "
-                              "onset strength are incommensurate uncalibrated scales; "
-                              "absent means unknown per the schema",
+                              "onset strength are incommensurate uncalibrated scales, so "
+                              "those branches emit none and absent means unknown per the "
+                              "schema. The plucked-string branch has a stated definition "
+                              "rather than a raw score, so it does emit one",
                 },
                 "eventOrdering": {
                     "policy": "ascending startSec, then id lexicographically ascending",
@@ -295,7 +353,7 @@ def build_document(*, analyzer_version, audio_info, stems, detectors, beat_times
 
 
 def build_experimental(*, beat_result, pitch_results, onset_results, event_counts,
-                       stage_seconds) -> dict:
+                       stage_seconds, pluck_results=None) -> dict:
     """Raw framewise curves and run bookkeeping.
 
     These live under metadata.experimental because the contract has no home for
@@ -330,6 +388,13 @@ def build_experimental(*, beat_result, pitch_results, onset_results, event_count
                 "onsetStrength": _round_all(result.envelope, _ROUND_SCORE),
             }
             for stem, result in onset_results.items()
+        },
+        "pluck": {
+            stem: {
+                "frameHopSec": _round(result.frame_hop_sec, 8),
+                "onsetStrength": _round_all(result.envelope, _ROUND_SCORE),
+            }
+            for stem, result in (pluck_results or {}).items()
         },
         "tempoDerivation": {
             "method": "60 / median inter-beat interval",

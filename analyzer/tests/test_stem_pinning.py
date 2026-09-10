@@ -164,15 +164,39 @@ class TestProvenance(unittest.TestCase):
             self.assertEqual(prov["stemsDir"], str(stems.resolve()))
             self.assertNotIn("model", prov)
 
-    def test_generated_provenance_names_the_model(self):
+    def test_generated_provenance_names_whichever_model_ran(self):
+        # The invariant is that the document records the checkpoint that actually
+        # produced these stems - not that it records any particular one. Pinning the
+        # default here is what made changing the default look like a regression.
+        for model in ("htdemucs", "htdemucs_6s"):
+            fake = separation.SeparationResult(
+                stem_paths={name: Path(name) for name in separation.stem_names(model)},
+                sample_rate=SR, seconds=1.0, max_cuda_allocated=1,
+                max_cuda_reserved=2, mode="generated", stems_dir=Path("x"), model=model)
+            prov = document.build_separation_provenance(fake, separation)
+            self.assertEqual(prov["mode"], model and "generated")
+            self.assertTrue(prov["separationRun"])
+            self.assertEqual(prov["model"], model)
+            self.assertEqual(prov["version"], "4.2.2")
+            self.assertEqual(prov["stems"], list(separation.stem_names(model)))
+
+    def test_the_default_model_is_the_one_that_yields_guitar_and_piano(self):
+        # Stated once, here, rather than assumed by every other test: an author charting
+        # a guitar part cannot do it from a stem that has the guitar mixed into `other`.
+        self.assertIn("guitar", separation.STEM_NAMES)
+        self.assertIn("piano", separation.STEM_NAMES)
+        self.assertEqual(separation.MODEL, "htdemucs_6s")
+
+    def test_a_run_that_predates_the_model_field_still_builds_provenance(self):
+        # Constructed without `model`, as every caller written before six-stem
+        # separation does; it must fall back to naming the module default.
         fake = separation.SeparationResult(
             stem_paths={}, sample_rate=SR, seconds=1.0, max_cuda_allocated=1,
             max_cuda_reserved=2, mode="generated", stems_dir=Path("x"))
-        prov = document.build_separation_provenance(fake, separation)
-        self.assertEqual(prov["mode"], "generated")
-        self.assertTrue(prov["separationRun"])
-        self.assertEqual(prov["model"], "htdemucs")
-        self.assertEqual(prov["version"], "4.2.2")
+        self.assertEqual(
+            document.build_separation_provenance(fake, separation)["model"],
+            separation.MODEL,
+        )
 
     def test_method_strings_distinguish_the_two_sources(self):
         self.assertIn("htdemucs", separation.METHOD)

@@ -59,6 +59,12 @@
       "kind": "vocals",
       "path": "stems/vocals.wav",
       "method": "example-separator"
+    },
+    {
+      "id": "stem-guitar",
+      "kind": "guitar",
+      "path": "stems/guitar.wav",
+      "method": "example-separator"
     }
   ],
   "sections": [
@@ -115,6 +121,18 @@
       "endKind": "instantaneous",
       "startSec": 2.0,
       "confidence": 0.42
+    },
+    {
+      "id": "ev-0007",
+      "type": "onset",
+      "detectorId": "det-onset",
+      "endKind": "instantaneous",
+      "startSec": 2.25,
+      "confidence": 0.88,
+      "source": { "stemId": "stem-guitar", "instrument": "guitar" },
+      "metadata": {
+        "note": "A guitar attack. It is an ordinary onset carrying 'source.stemId', not a type of its own - a consumer that knows nothing about guitars still reads it as a sound starting, which is what the open vocabulary is for. A strummed chord is one event here, not one per string."
+      }
     },
     {
       "id": "ev-0006",

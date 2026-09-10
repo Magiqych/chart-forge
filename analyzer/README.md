@@ -81,8 +81,12 @@ Two models download themselves on first use, into PyTorch's usual hub cache
 
 | Model | Size | Source |
 | --- | ---: | --- |
+| htdemucs_6s | ~50 MiB | dl.fbaipublicfiles.com |
 | htdemucs | ~80 MiB | dl.fbaipublicfiles.com |
 | Beat This! `final0` | ~77 MiB | cloud.cp.jku.at |
+
+Only the model a run actually uses is fetched; `htdemucs` downloads nothing unless
+`--model htdemucs` is asked for.
 
 torchcrepe is the exception: its weights ship inside the wheel, so it downloads nothing.
 
@@ -108,22 +112,46 @@ python -m analyzer <audio-file> --output-dir <directory>
 python -m analyzer <audio-file> --output-dir <directory> --stems-dir <existing-stems>
 ```
 
-Without `--stems-dir` the Analyzer runs htdemucs and writes
-`<output-dir>/stems/{drums,bass,other,vocals}.wav` alongside `<output-dir>/analysis.json`.
-It refuses to overwrite anything it would write, so re-running means choosing a fresh
-output directory.
+Without `--stems-dir` the Analyzer separates the audio and writes
+`<output-dir>/stems/{vocals,drums,bass,guitar,piano,other}.wav` alongside
+`<output-dir>/analysis.json`. It refuses to overwrite anything it would write, so
+re-running means choosing a fresh output directory.
+
+### Which model, and why six sources
+
+```powershell
+python -m analyzer <audio-file> --output-dir <directory> --model htdemucs
+```
+
+`htdemucs_6s` is the default. It is the same architecture as `htdemucs` with a different
+checkpoint, and it returns guitar and piano as their own stems instead of folding both
+into `other`. That is the whole reason it is the default: an author charting a guitar part
+cannot hear the guitar, and cannot see where it was struck, while it is mixed in with
+every other accompaniment instrument.
+
+Its guitar and piano separation is acknowledged upstream to be weaker than its other four,
+and that is accepted deliberately. The goal is to **locate notes in time**, not to produce
+a release-quality guitar recording, and leakage costs nothing for that.
+
+`--model htdemucs` selects the four-source checkpoint, so an earlier run can be reproduced.
 
 ### Reusing existing stems
 
-`--stems-dir` points at a directory that already contains all four stems:
+`--stems-dir` points at a directory that already contains the stems:
 
 ```text
 <stems-dir>/
-├─ drums.wav
-├─ bass.wav
-├─ other.wav
-└─ vocals.wav
+├─ vocals.wav      required
+├─ drums.wav       required
+├─ bass.wav        required
+├─ other.wav       required
+├─ guitar.wav      used when present
+└─ piano.wav       used when present
 ```
+
+Only the four core stems are required, so **a directory pinned before guitar and piano
+existed still works**: the run simply has no guitar or piano branch. Present-but-optional
+stems are validated exactly like the rest - same sample rate, channel count and length.
 
 The directory is **read only**. Nothing is written into it, and the stems are not copied
 into the output directory - the run writes only `analysis.json`, and `stems[].path`
@@ -193,15 +221,52 @@ cannot prove they were separated from it.
 ## Current pipeline
 
 ```text
-full mix       -> Beat This!            beats, downbeats, raw logits
-audio          -> htdemucs              four stems
-  drums, other -> librosa               onsets
-  bass, vocals -> torchcrepe            pitch, periodicity, voiced runs
-                                        -> Analysis 0.2
+full mix        -> Beat This!            beats, downbeats, raw logits
+audio           -> htdemucs_6s           six stems
+  drums, other  -> librosa               onsets
+  bass, vocals  -> torchcrepe            pitch, periodicity, voiced runs
+  guitar, piano -> pluck                 attacks, with a confidence
+                                         -> Analysis 0.2
 ```
 
 Beat tracking runs on the full mix rather than a stem, and is an independent branch of
 the pipeline rather than a consumer of separation.
+
+### The plucked-string branch
+
+Guitar and piano get their own detector rather than librosa's defaults, because a guitar
+is not one instrument to a transient detector. A strummed chord is six transients over
+20-40 ms and is **one** event; a muted cutting figure is four transients in the same span
+and is **four**. Nothing tells those apart by spacing, so `pluck.py` uses one spacing rule
+set at the boundary of what a player can physically produce (40 ms, which admits
+thirty-seconds at 150 BPM) and lets everything above it through.
+
+A candidate is kept when it is a local peak, stands far enough above a rolling-median
+local background, and is far enough from the last one kept. All of it is a pure function
+of an onset-strength envelope, so the awkward cases are tested directly.
+
+Guitar and piano share the branch because they pose the same problem. Giving piano its own
+tuning would be inventing a distinction nobody has measured.
+
+#### A stem that is only bleed
+
+Six-source separation always writes six files, whether or not the song contains six
+instruments. A song with no piano still gets a piano stem, and what lands in it is bleed
+with real transient structure - the first real run produced **2156 piano attacks for a
+song with no piano in it**.
+
+So each plucked stem is weighed against the recording it came from before it is searched.
+Measured on that run:
+
+```text
+vocals -6.0 dB   drums -8.1 dB   bass  -7.3 dB
+guitar -10.2 dB  other -13.9 dB  piano -26.0 dB
+```
+
+A stem more than 20 dB below the mix contributes about one percent of its power - nobody
+is charting to it, because they cannot hear it - and reports no attacks. The stem is still
+separated and still playable in the Editor's mixer, so an author can listen and judge for
+themselves; only the guide layer is withheld, and the run says so on the console.
 
 ## Scope
 
@@ -249,9 +314,16 @@ leaving the creative decisions with the author.
 
 Every one of these is a known, deliberate gap rather than an oversight:
 
-- **`confidence` is never emitted.** Beat This! logits, torchcrepe periodicity and
-  librosa onset strength are uncalibrated and mutually incomparable, so writing any of
-  them into one field would mislead. Absent means unknown.
+- **`confidence` is emitted for plucked-string attacks only.** Beat This! logits,
+  torchcrepe periodicity and librosa onset strength are uncalibrated and mutually
+  incomparable, so writing any of them into one field would mislead, and those branches
+  emit none - absent goes on meaning unknown. The plucked-string branch is the exception
+  because it has a definition rather than a score: `(peak - local background) / peak`, the
+  fraction of a transient standing above the passage around it, bounded in 0..1 and
+  comparable between events and between documents.
+- **A guitar attack is not a guitar note.** It is where a string was struck. Nothing
+  measures how long it rang, and a hammer-on, a pull-off or a slide has no attack to find
+  - so a passage played legato reports fewer events than it has notes.
 - **A `pitch-run` is not a musical note.** It is a provisional voiced segment from a
   periodicity threshold; one note can fragment into several runs.
 - **No tempo map.** Only a single representative `tempo.bpm`, derived from the median
