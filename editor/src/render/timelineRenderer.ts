@@ -10,8 +10,13 @@
  * src/core and is unit tested there.
  */
 
-import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
-import { eventBox, type PitchRange, type PitchRanges } from "../core/eventGeometry";
+import {
+  LANE_IDS,
+  type AnalysisProjection, type LaneId, type ProjectedEvent,
+} from "../core/analysis";
+import {
+  eventBox, tickFraction, type PitchRange, type PitchRanges,
+} from "../core/eventGeometry";
 import { findRow, type Layout } from "../core/lanes";
 import { timeToX, viewportEndSec, visibleSlice, type Viewport } from "../core/viewport";
 import { theme } from "./theme";
@@ -195,7 +200,7 @@ export class TimelineRenderer {
       range: PitchRange;
     } | null = null;
 
-    for (const lane of ["drums", "other", "bass", "vocals"] as const) {
+    for (const lane of LANE_IDS) {
       if (!scene.visibleLanes.has(lane)) continue;
       const row = findRow(scene.layout, lane);
       if (!row) continue;
@@ -300,9 +305,20 @@ export class TimelineRenderer {
       // must not silently fall into either of the other two shapes.
       switch (event.endKind) {
         case "instantaneous": {
+          // A tick as tall as the detector is sure, when it says how sure it is.
+          //
+          // A guitar stem yields eight events a second, and drawn at one uniform height
+          // that is a picket fence: every attack looks alike, and the strong beats an
+          // author is actually charting to are invisible among the passing ones. Scaling
+          // by `confidence` turns the same data into a shape that can be read at a
+          // glance, and costs nothing on a lane whose events carry none - `full` is
+          // exactly what they drew before.
+          const height = tickFraction(event.confidence);
+          const middle = (box.topPx + box.bottomPx) / 2;
+          const half = ((box.bottomPx - box.topPx) / 2) * height;
           ctx.beginPath();
-          ctx.moveTo(Math.round(box.leftPx) + 0.5, box.topPx);
-          ctx.lineTo(Math.round(box.leftPx) + 0.5, box.bottomPx);
+          ctx.moveTo(Math.round(box.leftPx) + 0.5, middle - half);
+          ctx.lineTo(Math.round(box.leftPx) + 0.5, middle + half);
           ctx.stroke();
           drawn += 1;
           break;

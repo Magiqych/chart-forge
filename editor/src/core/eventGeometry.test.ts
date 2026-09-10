@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { LaneId, ProjectedEvent } from "./analysis";
+import { byLane, type LaneId, type ProjectedEvent } from "./analysis";
 import {
   distanceToBox, eventBox, hitTestAnalysisEvent, pitchRangesFor,
   HIT_TOLERANCE_PX, SPAN_HEIGHT_PX, TICK_INSET_PX,
@@ -214,13 +214,15 @@ describe("hitTestAnalysisEvent — what is not selectable", () => {
 
 describe("pitchRangesFor", () => {
   it("gives each lane its own scale", () => {
-    const byLane: Record<LaneId, ProjectedEvent[]> = {
-      drums: [],
-      other: [],
-      bass: [span("b1", 0, 1, 36, { lane: "bass" }), span("b2", 1, 2, 48, { lane: "bass" })],
-      vocals: [span("v1", 0, 1, 60), span("v2", 1, 2, 72)],
-    };
-    const ranges = pitchRangesFor({ eventsByLane: byLane });
+    // Built from LANE_IDS rather than listed, so a new lane cannot make this stop
+    // compiling for a reason that has nothing to do with what it is testing.
+    const events: Record<LaneId, ProjectedEvent[]> = byLane(() => []);
+    events.bass = [
+      span("b1", 0, 1, 36, { lane: "bass" }),
+      span("b2", 1, 2, 48, { lane: "bass" }),
+    ];
+    events.vocals = [span("v1", 0, 1, 60), span("v2", 1, 2, 72)];
+    const ranges = pitchRangesFor({ eventsByLane: events });
     // Bass sits far below vocals; a shared scale would flatten both.
     expect(ranges.bass.maxMidi).toBeLessThan(ranges.vocals.maxMidi);
     expect(ranges.bass.minMidi).toBeLessThan(ranges.vocals.minMidi);

@@ -15,9 +15,34 @@
 export type EndKind = "instantaneous" | "unknown" | "bounded";
 
 /** Which lane an event is drawn in. Derived from `source.stemId`. */
-export type LaneId = "drums" | "other" | "bass" | "vocals";
+export type LaneId = "drums" | "bass" | "guitar" | "piano" | "other" | "vocals";
 
-export const LANE_IDS: readonly LaneId[] = ["drums", "other", "bass", "vocals"];
+/**
+ * Every lane, in the order they are drawn and listed.
+ *
+ * The one place the set is written down. Everything that used to spell the four out -
+ * the renderer, the hit test, the layer list, the projection's per-lane records - reads
+ * this instead, so a separation model that yields another instrument is a change here
+ * and not a hunt through eight files.
+ *
+ * Rhythm section first, then the melodic parts, then the catch-all: an author reads down
+ * the timeline looking for what carries the beat before what carries the tune.
+ */
+export const LANE_IDS: readonly LaneId[] = [
+  "drums", "bass", "guitar", "piano", "other", "vocals",
+];
+
+/** A record with an entry for every lane, built by asking the caller for each. */
+export function byLane<T>(make: (lane: LaneId) => T): Record<LaneId, T> {
+  return {
+    drums: make("drums"),
+    bass: make("bass"),
+    guitar: make("guitar"),
+    piano: make("piano"),
+    other: make("other"),
+    vocals: make("vocals"),
+  };
+}
 
 export interface ProjectedBeat {
   readonly timeSec: number;
@@ -37,6 +62,14 @@ export interface ProjectedEvent {
   /** Present only when endKind is "bounded". */
   readonly endSec?: number;
   readonly endKind: EndKind;
+  /**
+   * How sure the detector is, 0 to 1, when it emits a figure at all.
+   *
+   * Absent means unknown, never zero - the Analysis contract is explicit about that, and
+   * most branches emit nothing because their raw scores have no comparable scale. The
+   * plucked-string branch does emit one, so anything reading this must cope with both.
+   */
+  readonly confidence?: number;
   readonly detectorId: string;
   readonly stemId: string;
   readonly lane: LaneId | null;
@@ -90,12 +123,17 @@ export interface AnalysisProjection {
   };
 }
 
-const STEM_TO_LANE: Readonly<Record<string, LaneId>> = {
-  "stem-drums": "drums",
-  "stem-other": "other",
-  "stem-bass": "bass",
-  "stem-vocals": "vocals",
-};
+/**
+ * Which stem an event came from, and therefore which lane it is drawn in.
+ *
+ * Derived from `LANE_IDS` rather than listed again: the Analyzer names a stem
+ * `stem-<kind>` and a lane is named for the same kind, so restating the mapping would
+ * only create somewhere for the two to disagree. A stem whose kind is not a lane the
+ * Editor draws stays laneless, which the contract's open vocabulary requires.
+ */
+const STEM_TO_LANE: Readonly<Record<string, LaneId>> = Object.fromEntries(
+  LANE_IDS.map((lane) => [`stem-${lane}`, lane]),
+) as Readonly<Record<string, LaneId>>;
 
 /** Unknown stems are kept but laneless, per the contract's open-vocabulary rule. */
 export function laneForStem(stemId: string | undefined): LaneId | null {
@@ -213,6 +251,9 @@ export function projectAnalysis(raw: unknown): AnalysisProjection {
       startSec: requireNumber(e["startSec"], `event ${String(e["id"])} startSec`),
       ...(endSec !== undefined ? { endSec } : {}),
       endKind,
+      ...(typeof e["confidence"] === "number" && Number.isFinite(e["confidence"])
+        ? { confidence: e["confidence"] }
+        : {}),
       detectorId: String(e["detectorId"] ?? ""),
       stemId,
       lane: laneForStem(stemId),
@@ -220,12 +261,7 @@ export function projectAnalysis(raw: unknown): AnalysisProjection {
     };
   });
 
-  const eventsByLane = {
-    drums: [] as ProjectedEvent[],
-    other: [] as ProjectedEvent[],
-    bass: [] as ProjectedEvent[],
-    vocals: [] as ProjectedEvent[],
-  };
+  const eventsByLane = byLane<ProjectedEvent[]>(() => []);
   for (const event of events) {
     if (event.lane !== null) eventsByLane[event.lane].push(event);
   }
@@ -243,12 +279,7 @@ export function projectAnalysis(raw: unknown): AnalysisProjection {
       beats: beats.length,
       downbeats: beats.reduce((n, b) => n + (b.isDownbeat ? 1 : 0), 0),
       events: events.length,
-      byLane: {
-        drums: eventsByLane.drums.length,
-        other: eventsByLane.other.length,
-        bass: eventsByLane.bass.length,
-        vocals: eventsByLane.vocals.length,
-      },
+      byLane: byLane((lane) => eventsByLane[lane].length),
     },
   };
 }

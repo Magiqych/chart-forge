@@ -14,13 +14,22 @@ export interface Row {
   readonly heightPx: number;
 }
 
-/** Top-to-bottom order of the timeline. Drums first: it is the densest and most used. */
+/**
+ * Top-to-bottom order of the timeline. Drums first: it is the densest and most used.
+ *
+ * A lane's height says what is drawn in it, not how important it is. Bass and vocals are
+ * tall because their events carry pitch and are placed vertically inside the lane;
+ * drums, guitar, piano and other are point events drawn as ticks, and a tall lane would
+ * be a tall empty box.
+ */
 export const DEFAULT_ROWS: readonly Row[] = [
   { id: "ruler", label: "Time", heightPx: 22 },
   { id: "waveform", label: "Waveform", heightPx: 90 },
   { id: "drums", label: "Drums", heightPx: 46 },
-  { id: "other", label: "Other", heightPx: 46 },
   { id: "bass", label: "Bass", heightPx: 74 },
+  { id: "guitar", label: "Guitar", heightPx: 46 },
+  { id: "piano", label: "Piano", heightPx: 46 },
+  { id: "other", label: "Other", heightPx: 46 },
   { id: "vocals", label: "Vocals", heightPx: 74 },
   { id: "notes", label: "Notes", heightPx: 70 },
   // Below the notes, because a decoration is drawn over the playfield rather than

@@ -13,7 +13,10 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
+import {
+  LANE_IDS,
+  type AnalysisProjection, type LaneId, type ProjectedEvent,
+} from "../core/analysis";
 import {
   slidePoints, travelsBetweenLanes, MIN_HELD_DURATION_SEC,
   type ChartNote, type ChartState, type EditorMode, type PlaceableType,
@@ -413,7 +416,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     let frame = 0;
     frame = requestAnimationFrame(() => {
       const visibleLanes = new Set<LaneId>(
-        (["drums", "other", "bass", "vocals"] as const).filter((lane) => visibleRows.has(lane)),
+        LANE_IDS.filter((lane) => visibleRows.has(lane)),
       );
       const scene: Scene = {
         view: { ...view, widthPx },
@@ -481,7 +484,7 @@ export function Timeline(props: TimelineProps): React.JSX.Element {
     const from = current.startSec;
     const to = viewportEndSec(current);
     const targets: LaneHitTarget[] = [];
-    for (const lane of ["drums", "other", "bass", "vocals"] as const) {
+    for (const lane of LANE_IDS) {
       if (!visibleRows.has(lane)) continue;
       const row = findRow(layout, lane);
       if (!row) continue;

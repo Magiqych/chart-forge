@@ -6,7 +6,10 @@
  * cannot deliver.
  */
 
-import type { AnalysisProjection, LaneId, ProjectedEvent } from "../core/analysis";
+import {
+  LANE_IDS,
+  type AnalysisProjection, type LaneId, type ProjectedEvent,
+} from "../core/analysis";
 import type { ChartNote, FlickDirection } from "../core/chart";
 import type { RowId } from "../core/lanes";
 import { theme } from "../render/theme";
@@ -67,13 +70,21 @@ interface LayerRow {
   readonly structural?: boolean;
 }
 
+/** Sentence case for a lane id, so the list is not another place they are spelled out. */
+function laneLabel(lane: LaneId): string {
+  return lane.charAt(0).toUpperCase() + lane.slice(1);
+}
+
 const LAYERS: readonly LayerRow[] = [
   { key: "grid", label: "Beat grid", swatch: theme.grid.downbeat, structural: true },
   { key: "waveform", label: "Waveform", swatch: theme.waveform, structural: true },
-  { key: "drums", label: "Drums", swatch: theme.lanes.drums },
-  { key: "other", label: "Other", swatch: theme.lanes.other },
-  { key: "bass", label: "Bass", swatch: theme.lanes.bass },
-  { key: "vocals", label: "Vocals", swatch: theme.lanes.vocals },
+  // Every lane the Editor knows, in the timeline's own order, so turning one on in the
+  // panel and finding it in the timeline are the same list read twice.
+  ...LANE_IDS.map((lane) => ({
+    key: lane as LayerKey,
+    label: laneLabel(lane),
+    swatch: theme.lanes[lane],
+  })),
   { key: "notes", label: "Notes", swatch: "#8899aa", structural: true },
   { key: "decorations", label: "Text", swatch: theme.decoration.border, structural: true },
 ];
@@ -81,7 +92,9 @@ const LAYERS: readonly LayerRow[] = [
 function countFor(projection: AnalysisProjection | null, key: LayerKey): string {
   if (!projection) return "";
   if (key === "grid") return `${projection.counts.beats}`;
-  if (key === "drums" || key === "other" || key === "bass" || key === "vocals") {
+  // Asked of LANE_IDS rather than spelled out: listing the four by hand is what left
+  // Guitar and Piano showing a blank count while every other lane showed a number.
+  if ((LANE_IDS as readonly string[]).includes(key)) {
     return `${projection.counts.byLane[key as LaneId]}`;
   }
   return "";

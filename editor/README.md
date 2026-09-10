@@ -20,7 +20,7 @@ Show the song on a timeline, with guide layers drawn over it:
 - beat grid, derived from tempo and offset
 - onsets
 - note starts, ends and durations
-- stems, individually viewable
+- stems, individually viewable and individually audible
 - analysis events, filterable by type, source and confidence
 
 and let the author place, move, retime and delete notes against that guide - with
@@ -122,6 +122,31 @@ front one draws the chart notes, the placement preview and the playhead. They re
 independently, so moving the pointer across a lane does not redraw 2258 events, and the
 stacking fixes the order the Editor needs: beat grid, then analysis overlay, then chart
 notes, then the playhead and live interaction.
+
+### The guitar guide
+
+The Analyzer separates guitar and piano as their own stems and reports where the guitar
+was struck. The Editor draws those attacks in a Guitar lane, walks them with the arrow
+keys, and lets an author snap notes to them.
+
+**None of it is a second system.** A guitar attack is an ordinary Analysis Event carrying
+`source.stemId`, so it reaches the timeline through the lane it is drawn in, reaches
+keyboard navigation through the same visible-lane filter as every other lane, and reaches
+the magnet through the same candidate list as a beat or a note edge. Adding the lane was
+adding an entry to `LANE_IDS`; the guide and the snapping followed from the architecture
+that was already there.
+
+Guitar has **no priority of its own** in the magnet. It is an `event` candidate like a
+drum hit or a vocal onset: nearest wins, measured in pixels so the magnet feels the same
+at every zoom, with the existing deterministic tie-break. Turning the Guitar layer off
+removes it from snapping and from arrow-key navigation together, because both read one
+answer - what you can walk to is what you can snap to.
+
+Ticks are drawn at a height that follows the event's `confidence`, floored so the weakest
+is still visible and clickable. A guitar stem yields around eight attacks a second, and at
+one uniform height that is a picket fence in which the strong beats an author is charting
+to are invisible. An event with **no** confidence is drawn full height: absent means
+unknown, not weak, so every lane that carries none looks exactly as it always did.
 
 ### Listening to stems
 

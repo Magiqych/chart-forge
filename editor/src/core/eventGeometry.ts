@@ -10,7 +10,7 @@
  * question asked of the overlay, never a change to it.
  */
 
-import type { LaneId, ProjectedEvent } from "./analysis";
+import { LANE_IDS, byLane, type LaneId, type ProjectedEvent } from "./analysis";
 import { pitchRange, pitchToY } from "./lanes";
 import { timeToX, type Viewport } from "./viewport";
 
@@ -38,12 +38,35 @@ export type PitchRanges = Readonly<Record<LaneId, PitchRange>>;
 export function pitchRangesFor(projection: {
   readonly eventsByLane: Readonly<Record<LaneId, readonly ProjectedEvent[]>>;
 }): PitchRanges {
-  return {
-    drums: pitchRange(projection.eventsByLane.drums),
-    other: pitchRange(projection.eventsByLane.other),
-    bass: pitchRange(projection.eventsByLane.bass),
-    vocals: pitchRange(projection.eventsByLane.vocals),
-  };
+  return byLane((lane) => pitchRange(projection.eventsByLane[lane]));
+}
+
+/**
+ * The shortest a tick may be drawn, as a fraction of its lane's height.
+ *
+ * An event the Analyzer chose to emit is one the author may want to snap to, so it has to
+ * be visible and clickable. A mark too short to see would be a filter pretending to be a
+ * drawing.
+ */
+export const MIN_TICK_FRACTION = 0.35;
+
+/**
+ * How much of a lane's height an instantaneous tick takes, from its confidence.
+ *
+ * A guitar stem yields around eight events a second, and drawn at one uniform height that
+ * is a picket fence: every attack looks alike, and the strong beats an author is charting
+ * to are lost among the passing ones. Scaling the tick turns the same data into a shape
+ * that can be read at a glance.
+ *
+ * An event with **no** confidence is drawn full height, because "unknown" is not "weak" -
+ * the Analysis contract is explicit that absent means unknown, and shrinking those would
+ * be the renderer inventing a claim the document never made. That is also why the lanes
+ * that carry no confidence look exactly as they always did.
+ */
+export function tickFraction(confidence: number | undefined): number {
+  if (confidence === undefined || !Number.isFinite(confidence)) return 1;
+  const clamped = confidence < 0 ? 0 : confidence > 1 ? 1 : confidence;
+  return MIN_TICK_FRACTION + (1 - MIN_TICK_FRACTION) * clamped;
 }
 
 export interface RowBox {
@@ -127,7 +150,7 @@ export interface LaneHitTarget {
  * Used only to break a tie: when two events are the same distance from the pointer, the
  * one drawn on top is the one the author can see, so it is the one they meant.
  */
-export const LANE_DRAW_ORDER: readonly LaneId[] = ["drums", "other", "bass", "vocals"];
+export const LANE_DRAW_ORDER: readonly LaneId[] = LANE_IDS;
 
 function zOrderOf(lane: LaneId): number {
   const index = LANE_DRAW_ORDER.indexOf(lane);

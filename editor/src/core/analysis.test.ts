@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AnalysisProjectionError,
+  LANE_IDS,
   laneForStem,
   projectAnalysis,
   type AnalysisProjection,
@@ -91,15 +92,26 @@ function fixture(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe("stem to lane mapping", () => {
-  it("maps the four known stems", () => {
-    expect(laneForStem("stem-drums")).toBe("drums");
-    expect(laneForStem("stem-other")).toBe("other");
-    expect(laneForStem("stem-bass")).toBe("bass");
-    expect(laneForStem("stem-vocals")).toBe("vocals");
+  it("maps every stem the Editor draws a lane for", () => {
+    for (const lane of LANE_IDS) {
+      expect(laneForStem(`stem-${lane}`)).toBe(lane);
+    }
+  });
+
+  it("covers the six a six-source separation produces", () => {
+    // Named rather than derived, so that dropping one from LANE_IDS is a failure here
+    // and not a silent narrowing of what the Editor can show.
+    expect([...LANE_IDS].sort()).toEqual(
+      ["bass", "drums", "guitar", "other", "piano", "vocals"],
+    );
   });
 
   it("tolerates an unknown stem rather than rejecting it", () => {
-    expect(laneForStem("stem-guitar")).toBeNull();
+    // `stem-guitar` used to be the example here. It is a lane now, so the case needs a
+    // stem that really is outside the vocabulary - the contract says an open one, and a
+    // separator that emits `synth` must not break the projection.
+    expect(laneForStem("stem-synth")).toBeNull();
+    expect(laneForStem("stem-accompaniment")).toBeNull();
     expect(laneForStem(undefined)).toBeNull();
   });
 });
@@ -156,8 +168,19 @@ describe("projection", () => {
   });
 
   it("maps every event to its lane via source.stemId", () => {
-    expect(projection.counts.byLane).toEqual({ drums: 1, other: 1, bass: 1, vocals: 1 });
+    expect(projection.counts.byLane).toEqual({
+      drums: 1, bass: 1, guitar: 0, piano: 0, other: 1, vocals: 1,
+    });
     expect(projection.eventsByLane.vocals[0]?.id).toBe("ev-vocals-000001");
+  });
+
+  it("gives a lane with nothing in it an empty list rather than leaving it out", () => {
+    // A four-stem document has no guitar; everything downstream indexes by lane and
+    // must find a list there, not undefined.
+    for (const lane of LANE_IDS) {
+      expect(Array.isArray(projection.eventsByLane[lane])).toBe(true);
+    }
+    expect(projection.eventsByLane.guitar).toEqual([]);
   });
 
   it("preserves the document's event ordering", () => {

@@ -14,7 +14,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AnalysisProjection, LaneId, ProjectedEvent } from "./core/analysis";
+import {
+  LANE_IDS,
+  type AnalysisProjection, type LaneId, type ProjectedEvent,
+} from "./core/analysis";
 import {
   chainOf, ChartError, flickEndAction, isBoundedPlaceable, travelsBetweenLanes,
   type ChartNote, type EditorMode, type FlickDirection, type PlaceableType,
@@ -100,7 +103,7 @@ function auditionVoice(type: PlaceableType): HitVoice {
 }
 
 const ALL_LAYERS: readonly LayerKey[] = [
-  "grid", "waveform", "drums", "other", "bass", "vocals", "notes", "decorations",
+  "grid", "waveform", ...LANE_IDS, "notes", "decorations",
 ];
 
 export default function App(): React.JSX.Element {
@@ -314,7 +317,7 @@ export default function App(): React.JSX.Element {
    */
   const visibleLanes = useMemo<ReadonlySet<LaneId>>(() => {
     const lanes = new Set<LaneId>();
-    for (const key of ["drums", "other", "bass", "vocals"] as const) {
+    for (const key of LANE_IDS) {
       if (visible.has(key)) lanes.add(key);
     }
     return lanes;
@@ -338,10 +341,15 @@ export default function App(): React.JSX.Element {
     }));
 
     const counts = result.projection.counts;
+    // Only the lanes that actually have something in them: a six-stem document lists six
+    // and a four-stem one lists four, and a status line of zeroes tells nobody anything.
+    const perLane = LANE_IDS
+      .filter((lane) => counts.byLane[lane] > 0)
+      .map((lane) => `${lane} ${counts.byLane[lane]}`)
+      .join(", ");
     setStatus(
-      `${counts.beats} beats (${counts.downbeats} downbeats), ${counts.events} events ` +
-        `- drums ${counts.byLane.drums}, other ${counts.byLane.other}, ` +
-        `bass ${counts.byLane.bass}, vocals ${counts.byLane.vocals}` +
+      `${counts.beats} beats (${counts.downbeats} downbeats), ${counts.events} events` +
+        (perLane ? ` - ${perLane}` : "") +
         (result.summary.analysisHashVerified ? " - hash verified" : ""),
     );
 

@@ -31,8 +31,12 @@ export const theme = {
   /** Observations: in front of the grid, inside their row. */
   lanes: {
     drums: "#e0a33c",
-    other: "#7f8fa6",
     bass: "#4fb3a5",
+    // Warm and cool against the two nearest hues, so guitar and piano are told apart
+    // from each other and from drums without relying on brightness alone.
+    guitar: "#c86adf",
+    piano: "#6f8fe0",
+    other: "#7f8fa6",
     vocals: "#d0708a",
   },
 
