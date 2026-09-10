@@ -32,6 +32,11 @@ pub struct LoadedProject {
     pub analysis_hash_verified: bool,
     /// Canonical path of the audio the analysis refers to, when it exists on disk.
     pub audio_path: Option<String>,
+    /// The separated stems the analysis lists, with their audio resolved the same way.
+    ///
+    /// Always present, possibly empty: an analysis written before stems existed, or one
+    /// run without separation, simply has none, and that is not an error.
+    pub stems: Vec<LoadedStem>,
     /// Canonical path of the resolved Chart document, if the project references one that
     /// exists. `None` for a project where authoring has not started.
     pub chart_path: Option<String>,
@@ -43,6 +48,19 @@ pub struct LoadedProject {
     /// path the project already references, or a sibling of the project file for a
     /// project that has no chart yet.
     pub chart_target_path: String,
+}
+
+/// One separated stem, as the Editor needs it.
+///
+/// `path` is `None` when the analysis names a stem whose file is not where it said - a
+/// stems directory moved or cleaned up, most often. That is reported rather than hidden,
+/// because a mixer row that cannot play is more use than a row that silently vanished.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadedStem {
+    pub id: String,
+    pub kind: String,
+    pub path: Option<String>,
 }
 
 /// Errors the UI is expected to tell apart. The `kind` matches the TypeScript union in
@@ -252,6 +270,7 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
             analysis: None,
             analysis_hash_verified: false,
             audio_path: None,
+            stems: Vec::new(),
             chart_path,
             chart,
             chart_hash_verified,
@@ -328,6 +347,32 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
         })
         .and_then(|p| if p.is_file() { canonical(&p) } else { None });
 
+    // Stems resolve exactly as the audio does, against the analysis document that named
+    // them. A stem whose file has gone is kept with no path rather than dropped.
+    let stems = analysis
+        .get("stems")
+        .and_then(|s| s.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let id = entry.get("id").and_then(|v| v.as_str())?;
+                    let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                    let path = entry
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .map(|reference| {
+                            let base =
+                                analysis_path.as_deref().map(Path::new).unwrap_or(project_path);
+                            resolve_ref(base, reference)
+                        })
+                        .and_then(|p| if p.is_file() { canonical(&p) } else { None });
+                    Some(LoadedStem { id: id.to_string(), kind: kind.to_string(), path })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(LoadedProject {
         project_path: canonical_project,
         project,
@@ -335,6 +380,7 @@ pub fn load_project(project_path: &str) -> LoadResult<LoadedProject> {
         analysis: Some(analysis),
         analysis_hash_verified: hash_verified,
         audio_path,
+        stems,
         chart_path,
         chart,
         chart_hash_verified,
@@ -403,6 +449,55 @@ mod tests {
         assert!(loaded.analysis.is_some());
         assert!(loaded.analysis_path.unwrap().replace('\\', "/").ends_with("runs/a/analysis.json"));
         assert!(!loaded.analysis_hash_verified, "no hash was recorded, so nothing was verified");
+    }
+
+    #[test]
+    fn resolves_stems_relative_to_the_analysis_and_reports_missing_ones() {
+        // The real layout: the project sits in projects/, the analysis under runs/, and
+        // the stems in a shared stems/ directory reached with `..` from the analysis.
+        let root = temp_dir("stems");
+        write(&root.join("stems/song/bass.wav"), "RIFF");
+        write(
+            &root.join("runs/a/analysis.json"),
+            r##"{"version":"0.2.0","audio":{"path":"song.wav","durationSec":1},"events":[],
+                 "stems":[{"id":"stem-bass","kind":"bass","path":"../../stems/song/bass.wav"},
+                          {"id":"stem-vocals","kind":"vocals","path":"../../stems/song/vocals.wav"}]}"##,
+        );
+        write(
+            &root.join("projects/song.project.json"),
+            r#"{"version":"0.1.0","audio":{"path":"x.wav"},
+                "analysis":{"kind":"file","path":"../runs/a/analysis.json"}}"#,
+        );
+
+        let loaded = load_project(root.join("projects/song.project.json").to_str().unwrap()).unwrap();
+        assert_eq!(loaded.stems.len(), 2, "a stem with no file is kept, not dropped");
+
+        let bass = &loaded.stems[0];
+        assert_eq!(bass.id, "stem-bass");
+        assert_eq!(bass.kind, "bass");
+        assert!(
+            bass.path.as_ref().unwrap().replace('\\', "/").ends_with("stems/song/bass.wav"),
+            "the stem resolved against the analysis, not the project: {:?}",
+            bass.path
+        );
+
+        let vocals = &loaded.stems[1];
+        assert_eq!(vocals.id, "stem-vocals");
+        assert!(vocals.path.is_none(), "a stem whose file has gone reports no path");
+    }
+
+    #[test]
+    fn a_project_with_no_stems_loads_with_none() {
+        // Every analysis written before separation existed takes this path.
+        let root = temp_dir("no-stems");
+        write(&root.join("analysis.json"), ANALYSIS);
+        write(
+            &root.join("p.json"),
+            r#"{"version":"0.1.0","audio":{"path":"x.wav"},
+                "analysis":{"kind":"file","path":"analysis.json"}}"#,
+        );
+        let loaded = load_project(root.join("p.json").to_str().unwrap()).unwrap();
+        assert!(loaded.stems.is_empty());
     }
 
     #[test]

@@ -14,6 +14,7 @@ import {
   emptyChart, projectChart, serializeChart, ChartError, type ChartState,
 } from "../core/chart";
 import { readSnapSettings, type SnapSettings } from "../core/snap";
+import type { StemAvailability } from "../core/stemMixer";
 import {
   directoryOf, relativePath,
   ProjectLoadError, type LoadFailureKind, type ProjectSummary,
@@ -27,10 +28,18 @@ interface RawLoadedProject {
   analysis: unknown;
   analysisHashVerified: boolean;
   audioPath: string | null;
+  stems: RawLoadedStem[];
   chartPath: string | null;
   chart: unknown;
   chartHashVerified: boolean;
   chartTargetPath: string;
+}
+
+/** One stem the loader resolved. `path` is null when the file is not where it said. */
+interface RawLoadedStem {
+  id: string;
+  kind: string;
+  path: string | null;
 }
 
 interface RawLoadError {
@@ -83,6 +92,14 @@ export interface OpenedProject {
   readonly chart: ChartState;
   /** True when the chart came off disk rather than being created empty just now. */
   readonly chartExisted: boolean;
+  /**
+   * The separated stems this project can offer for audition, in the Analyzer's order.
+   *
+   * Empty for an analysis run without separation, which is the ordinary case for older
+   * projects and must not stop one opening. A stem whose file could not be resolved is
+   * still listed, with no url, so the mixer can say so rather than quietly omit it.
+   */
+  readonly stems: readonly StemAvailability[];
   /** Snap settings restored from `project.editor.snap`, or the defaults. */
   readonly snap: SnapSettings;
 }
@@ -146,6 +163,23 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
     }
   }
 
+  // Each stem is granted separately and by exactly the same route. The scope stays a
+  // list of individual files the user's own project pointed at; nothing here widens it
+  // to a directory. A stem that cannot be granted becomes a disabled row, not a failure
+  // to open the project.
+  const stems: StemAvailability[] = [];
+  for (const stem of loaded.stems ?? []) {
+    let url: string | null = null;
+    if (stem.path) {
+      try {
+        url = convertFileSrc(await invoke<string>("allow_audio", { path: stem.path }));
+      } catch {
+        url = null;
+      }
+    }
+    stems.push({ id: stem.id, label: stemLabel(stem), url });
+  }
+
   // A project without a chart is a project where authoring has not started, so the
   // Editor starts one in memory. It reaches the disk only when the author saves.
   let chart: ChartState;
@@ -189,8 +223,22 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
     audioUrl,
     chart,
     chartExisted,
+    stems,
     snap: readSnapSettings(loaded.project["editor"]),
   };
+}
+
+/**
+ * What to call a stem in the mixer.
+ *
+ * `kind` is an open vocabulary, so this capitalises whatever the separator produced
+ * rather than mapping a fixed set - a run that yields `piano` gets Piano without anyone
+ * having to add it here. The id is the fallback for a stem with no kind at all.
+ */
+function stemLabel(stem: RawLoadedStem): string {
+  const kind = stem.kind.trim();
+  if (kind === "") return stem.id;
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
 /**

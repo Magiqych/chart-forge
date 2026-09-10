@@ -590,3 +590,86 @@ body {
   cursor: pointer;
 }
 .inspector-delete:hover { background: #3a2a34; border-color: #6a4450; color: #f3d6d6; }
+
+/* --- the stem mixer ----------------------------------------------------------------
+   Sits in the left column under the layer list. Every row is one source: a name, its
+   two toggles, and a fader. The row that is actually being heard is lit, because "why
+   can I not hear the bass" is the question this panel exists to answer at a glance. */
+
+.stem-mixer { margin-top: 16px; }
+.stem-mixer h2 {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin: 4px 0 4px;
+}
+.stem-mixer ul { list-style: none; margin: 0 0 8px; padding: 0; }
+
+.stem-listening {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stem-row {
+  padding: 3px 0 4px;
+  border-left: 2px solid transparent;
+  padding-left: 5px;
+}
+.stem-row.audible { border-left-color: var(--accent); }
+.stem-row.disabled .stem-name { color: var(--muted); text-decoration: line-through; }
+
+.stem-head { display: flex; align-items: center; gap: 4px; }
+.stem-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stem-note { font-size: 10px; color: var(--muted); flex: 0 0 auto; }
+
+.stem-toggle {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 18px;
+  background: #232c38;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: 10px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+.stem-toggle:hover:not(:disabled) { background: #2c3745; }
+.stem-toggle:disabled { opacity: 0.35; cursor: default; }
+/* Mute and Solo are told apart by colour as well as by letter: they are one character
+   each, side by side, and two identical lit buttons would be unreadable. */
+.stem-toggle.on { background: #8a4550; border-color: #b56672; color: #ffffff; }
+.stem-toggle.solo.on { background: #2f6fd0; border-color: #4d8ff0; color: #ffffff; }
+
+.stem-row input[type="range"] { width: 100%; margin: 2px 0 0; height: 14px; }
+
+.stem-reset {
+  width: 100%;
+  background: #232c38;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.stem-reset:hover:not(:disabled) { background: #2c3745; }
+.stem-reset:disabled { opacity: 0.4; cursor: default; }
+
+.stem-warning { margin: 6px 0 0; font-size: 10px; color: var(--muted); }
+
+.stem-mixer button:focus-visible,
+.stem-mixer input:focus-visible {
+  outline: 2px solid #7fb0f5;
+  outline-offset: 1px;
+}

@@ -48,6 +48,15 @@ export interface LayerPanelProps {
    * shows the other's panel.
    */
   readonly decorationInspector: React.ReactNode;
+  /**
+   * The stem mixer, for a project that has stems.
+   *
+   * Passed in for the same reason as the inspector above. It goes above the detector
+   * list rather than at the foot of the column, because it is reached for constantly
+   * while charting and the detectors are reference material - at the foot, on an
+   * ordinary window, its controls sat below the fold.
+   */
+  readonly stemMixer: React.ReactNode;
 }
 
 interface LayerRow {
@@ -82,7 +91,7 @@ export function LayerPanel(
   {
     projection, visible, onToggle, selectedEvent, selectedNotes, onDeleteNote,
     canConnect, connectHint, onConnect, onDisconnect, onEndAction, onFlickDirection,
-    runSize, decorationInspector,
+    runSize, decorationInspector, stemMixer,
   }: LayerPanelProps,
 ): React.JSX.Element {
   return (
@@ -120,6 +129,8 @@ export function LayerPanel(
       />
 
       <EventInspector event={selectedEvent} projection={projection} />
+
+      {stemMixer}
 
       {projection ? (
         <div className="detector-list">

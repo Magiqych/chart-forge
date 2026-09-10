@@ -43,6 +43,21 @@ export interface ProjectedEvent {
   readonly pitch?: ProjectedPitch;
 }
 
+/**
+ * A stem the Analyzer separated out of the recording.
+ *
+ * Carried across because the Editor lets an author listen to one - `path` is where the
+ * audio was said to be, relative to the Analysis document, and only the Rust side can
+ * turn that into something playable. The projection stays honest about what the document
+ * said; whether the file is actually there is a separate question, answered on load.
+ */
+export interface ProjectedStem {
+  readonly id: string;
+  /** Open vocabulary: `bass`, `vocals`, `piano`, anything the separator produced. */
+  readonly kind: string;
+  readonly path?: string;
+}
+
 export interface ProjectedDetector {
   readonly id: string;
   readonly name: string;
@@ -59,6 +74,8 @@ export interface AnalysisProjection {
     readonly channels?: number;
   };
   readonly tempoBpm?: number;
+  /** Empty for an analysis run without separation, which is not an error. */
+  readonly stems: readonly ProjectedStem[];
   readonly beats: readonly ProjectedBeat[];
   readonly detectors: readonly ProjectedDetector[];
   /** Sorted by (startSec, id), as the Analysis contract guarantees. */
@@ -134,6 +151,16 @@ export function projectAnalysis(raw: unknown): AnalysisProjection {
   const tempoRaw = (doc["tempo"] ?? {}) as Record<string, unknown>;
   const tempoBpm = typeof tempoRaw["bpm"] === "number" ? tempoRaw["bpm"] : undefined;
 
+  const stemsRaw = Array.isArray(doc["stems"]) ? doc["stems"] : [];
+  const stems: ProjectedStem[] = stemsRaw.map((entry) => {
+    const s = entry as Record<string, unknown>;
+    return {
+      id: String(s["id"] ?? ""),
+      kind: String(s["kind"] ?? ""),
+      ...(typeof s["path"] === "string" ? { path: s["path"] } : {}),
+    };
+  });
+
   const beatsRaw = Array.isArray(doc["beats"]) ? doc["beats"] : [];
   const beats: ProjectedBeat[] = beatsRaw.map((entry) => {
     const b = entry as Record<string, unknown>;
@@ -207,6 +234,7 @@ export function projectAnalysis(raw: unknown): AnalysisProjection {
     version,
     audio,
     ...(tempoBpm !== undefined ? { tempoBpm } : {}),
+    stems,
     beats,
     detectors,
     events,

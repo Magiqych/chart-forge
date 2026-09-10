@@ -123,6 +123,95 @@ independently, so moving the pointer across a lane does not redraw 2258 events, 
 stacking fixes the order the Editor needs: beat grid, then analysis overlay, then chart
 notes, then the playhead and live interaction.
 
+### Listening to stems
+
+The Analyzer already separates the recording and records what it produced in
+`analysis.stems[]`. The Editor reads that and lets an author listen to one part at a time.
+**Nothing here runs Demucs**; the Editor only ever plays files that already exist.
+
+Four things are kept apart, and the separation is the design:
+
+| | Where it lives | What it knows |
+| --- | --- | --- |
+| transport state | the `<audio>` element, as before | where playback is, whether it runs, how fast |
+| stem availability | `OpenedProject.stems` | which stems this project has, and their URLs |
+| mixer state | `core/stemMixer.ts` | a fader, a Mute and a Solo per track |
+| audio engine | `audio/stemEngine.ts` | the sources, and keeping them in step |
+
+**There is one clock and it did not change.** The mixer holds no time and the engine
+holds no position of its own: it is told where the element has got to and lines its
+sources up with that. So the playhead, Follow, the note clicks, seeking, the arrow keys
+and the rate menu all go on reading exactly the clock they always read, and a stem cannot
+disagree with the playhead about where the music is.
+
+#### Solo, Mute and the original
+
+The ordinary rules of a mixing desk:
+
+    with anything soloed:  a track is heard if it is soloed and not muted
+    with nothing soloed:   a track is heard if it is not muted
+
+and then one extra clause: **the original steps aside as soon as a stem is brought in.**
+Stems sum back to the recording they came from, so leaving the original playing underneath
+a soloed bass would double the bass and comb-filter it. Rather than making an author
+remember to silence it first, bringing a stem in silences it for them.
+
+The original is a row in the mixer rather than a mode, and it **starts soloed** - which is
+why a project opens sounding exactly as it always did, and why switching to the bass and
+switching back are the same gesture. Solo here reads as "this is what I am listening to".
+Several stems may be soloed at once. Mute beats Solo. A fader is loudness only: pulling a
+soloed stem to zero gives silence, never a surprise return of the full mix. `Back to the
+song` restores the original from wherever the author has got to, leaving their balance
+alone. The Editor never reaches a state with nothing soloed - dropping the last solo hands
+the original back - because that state would route every unmuted stem at once.
+
+The toolbar's volume and mute stay the master over all of it. The note clicks keep their
+own gain and are untouched, which is what makes charting against a quiet stem work.
+
+#### Why Web Audio, and what it costs
+
+The cheap version is an `<audio>` element per stem, each seeked to the transport's
+position. It was rejected: each element decodes on its own timer, so several wander apart
+by tens of milliseconds - and these are not independent tracks, they are one performance
+cut into parts, where that reads as a flam on every drum hit. Sources scheduled on one
+`AudioContext` share a sample clock and stay locked to each other however many there are.
+
+The one drift left is between that clock and the element's, and it is corrected in one
+place. A rate change and a seek are acted on at once; a *small* drift has to persist for a
+third of a second before it is believed, because a media element's `currentTime` is not a
+smooth clock - it was measured standing still for around 130 ms at a time, which read as a
+stem running away and produced a burst of six restarts at the start of every solo.
+Corrections are crossfades, so they are inaudible. Measured drift in the running Editor
+settles within a few milliseconds of zero.
+
+Web Audio needs whole decoded buffers, and `decodeAudioData` resamples to the *context's*
+rate rather than the file's - which is a trap worth naming. Measured on a machine whose
+sound device runs at 192 kHz, one 201-second stereo stem decoded to **294 MB**, and four
+would have been 1.2 GB, for source files that are 44.1 kHz. The context is therefore asked
+for 48 kHz, which brings the same stem to **74 MB** and its decode from 1.8 s to 0.6 s,
+and loses nothing audible.
+
+On top of that a stem is fetched and decoded **only when it is first actually listened
+to** - opening a project costs nothing, and neither does never opening the mixer. Buffers
+are then kept, because re-decoding on every Solo toggle would stall for that 0.6 s each
+time, and all released when the project changes. An author who solos all four at once
+holds about 300 MB, which is the worst case and takes four deliberate clicks to reach.
+
+The cost of that choice is pitch: `AudioBufferSourceNode.playbackRate` resamples where the
+element time-stretches. Matching it would mean writing a time-stretcher; giving each stem
+its own element to get `preservesPitch` is the design rejected above. Stem alignment was
+judged worth more than pitch for a tool whose purpose is reading rhythm, and the panel
+says so while a reduced rate is in effect.
+
+#### Missing and partial stems
+
+A project whose analysis has no `stems` shows no mixer at all and behaves in every respect
+as it did before this existed. A stem the analysis names but whose file is not there is
+listed and disabled, saying `file missing`, rather than quietly omitted - a row that
+cannot play is more use than a row that vanished. Each stem is granted to the asset scope
+individually, by the same route as the original audio; nothing widens the scope to a
+directory.
+
 ### The filesystem boundary
 
 The frontend gets **no general filesystem access**. It calls one Rust command with a
@@ -1030,11 +1119,18 @@ different one. No particle is ever stored; a document holds the configuration. T
 Inspector offers presets, which write ordinary generic properties and are never recorded
 by name, and `prefers-reduced-motion` holds everything still without touching the chart.
 
+The stem mixer: one row per source in the left column - the original, and whatever the
+Analyzer separated - each with a fader, Mute and Solo. Soloing Bass to place notes against
+the bassline is what it is for. The original steps aside automatically as soon as a stem
+is brought in, because stems are the same recording taken apart and playing the whole mix
+underneath one of its own parts doubles that part. Nothing about the mixer reaches any
+document: it is session state, like the volume and the playback rate.
+
 Not implemented, and deliberately so: automatic event-to-note conversion, bulk conversion,
 turning an event's duration into a hold, any mapping from a stem to a lane, dragging a
 batch placement, a general keyboard shortcut
-framework, autosave, spectrogram, pitch contours, stem soloing, density aggregation, and
-Player integration.
+framework, autosave, spectrogram, pitch contours, density aggregation, running the
+separation itself, and Player integration.
 
 Known limitations:
 
@@ -1043,6 +1139,9 @@ Known limitations:
   a second sweep to the first.
 - A slide's individual points cannot be dragged on their own. Moving a chain moves all of
   it; to move one point, `Disconnect`, move it, and `Connect` again.
+- Stems follow a reduced playback rate by resampling, so at 0.25x they sound two octaves
+  down where the original holds its pitch. The panel says so while it is true. See
+  *Listening to stems* below for why that trade was made.
 - Only a Long can be resized. A slide's end is a place rather than a length.
 - Decoration 0.1 is text only. Image, shape and effect decorations, keyframes, custom
   fonts and attachment to a note are all future work, and none of them is stubbed out.

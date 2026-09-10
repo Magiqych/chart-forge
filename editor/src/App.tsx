@@ -71,6 +71,14 @@ import {
 import { loadAudio, type LoadedAudio } from "./audio/player";
 import { createHitSoundEngine, type HitSoundEngine } from "./audio/hitsound";
 import {
+  DECODE_RATE_HZ, createStemEngine, type StemEngine, type StemLoadStatus,
+} from "./audio/stemEngine";
+import {
+  EMPTY_MIXER, ORIGINAL_TRACK_ID, effectiveGain, isOriginalAudible, listenToOriginal,
+  openMixer, routedStemIds, setVolume as setTrackVolume, toggleMuted as toggleTrackMuted,
+  toggleSolo as toggleTrackSolo, type MixerState, type StemAvailability,
+} from "./core/stemMixer";
+import {
   advanceScheduler, buildHitPoints, idleScheduler, resetSchedulerTo,
   type HitPoint, type HitVoice, type SchedulerState,
 } from "./core/hitScheduler";
@@ -78,6 +86,7 @@ import type { NotesRenderStats } from "./render/notesRenderer";
 import type { RenderStats } from "./render/timelineRenderer";
 import { ChartBar } from "./ui/ChartBar";
 import { LayerPanel, type LayerKey } from "./ui/LayerPanel";
+import { StemMixer } from "./ui/StemMixer";
 import { Timeline } from "./ui/Timeline";
 import { Toolbar } from "./ui/Toolbar";
 
@@ -126,6 +135,16 @@ export default function App(): React.JSX.Element {
    */
   const [auditionOn, setAuditionOn] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
+  /**
+   * What the author is listening to, and the stems they could listen to.
+   *
+   * Session state like the rest of the transport settings: it changes no document, is
+   * not undoable, and the Chart contract has nowhere for it - what an author had soloed
+   * while working is not a property of the chart they wrote.
+   */
+  const [stems, setStems] = useState<readonly StemAvailability[]>([]);
+  const [mixer, setMixer] = useState<MixerState>(EMPTY_MIXER);
+  const [stemStatuses, setStemStatuses] = useState<Readonly<Record<string, StemLoadStatus>>>({});
   const [followPlayhead, setFollowPlayhead] = useState(false);
   /**
    * The top-level split: are we making notes, or choosing them?
@@ -159,7 +178,9 @@ export default function App(): React.JSX.Element {
   const [eventLane, setEventLane] = useState(0);
 
   const audioRef = useRef<LoadedAudio | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const hitSoundRef = useRef<HitSoundEngine | null>(null);
+  const stemEngineRef = useRef<StemEngine | null>(null);
   const schedulerRef = useRef<SchedulerState>(idleScheduler());
   /**
    * The moments the scheduler reads, flattened from the notes.
@@ -189,25 +210,81 @@ export default function App(): React.JSX.Element {
   const selectedEventId = session?.selectedEventId ?? null;
 
   /**
-   * The click engine, built on first use.
+   * The Editor's one Web Audio context, built on first use.
    *
-   * Browsers will not start an AudioContext without a gesture, so it is created the
-   * first time a note actually needs to sound - which is always inside a click or a key
-   * press - rather than on mount.
+   * Browsers will not start a context without a gesture, so it is created the first time
+   * something actually needs to sound - which is always inside a click or a key press -
+   * rather than on mount. Both the note clicks and the stems share it, so they share a
+   * clock and a device; two contexts would be two clocks over the same music.
    */
-  const hitSound = useCallback((): HitSoundEngine | null => {
-    if (!hitSoundRef.current) {
+  const audioContext = useCallback((): AudioContext | null => {
+    if (!audioContextRef.current) {
       try {
-        hitSoundRef.current = createHitSoundEngine(new AudioContext());
+        audioContextRef.current = new AudioContext({ sampleRate: DECODE_RATE_HZ });
       } catch {
-        // No Web Audio: the Editor works, it simply does not click.
-        return null;
+        try {
+          // Some devices refuse a requested rate. Working at the device's rate is worse
+          // for memory but is never worse than not working.
+          audioContextRef.current = new AudioContext();
+        } catch {
+          // No Web Audio: the Editor works, it simply does not click or play stems.
+          return null;
+        }
       }
     }
-    return hitSoundRef.current;
+    const context = audioContextRef.current;
+    // A context created before the gesture that needs it starts suspended; resuming is
+    // harmless when it is already running.
+    if (context.state === "suspended") void context.resume();
+    return context;
   }, []);
 
-  useEffect(() => () => hitSoundRef.current?.close(), []);
+  /** The click engine, built over that context on first use. */
+  const hitSound = useCallback((): HitSoundEngine | null => {
+    if (!hitSoundRef.current) {
+      const context = audioContext();
+      if (!context) return null;
+      hitSoundRef.current = createHitSoundEngine(context);
+    }
+    return hitSoundRef.current;
+  }, [audioContext]);
+
+  /**
+   * The stem engine, built over the same context on first use.
+   *
+   * Nothing is fetched or decoded here: a stem is loaded only when the plan below
+   * actually asks for it, so opening a project with four stems costs nothing until the
+   * author listens to one.
+   */
+  const stemEngine = useCallback((): StemEngine | null => {
+    if (!stemEngineRef.current) {
+      const context = audioContext();
+      if (!context) return null;
+      stemEngineRef.current = createStemEngine(context, () => {
+        setStemStatuses(stemEngineRef.current?.statuses() ?? {});
+      });
+      stemEngineRef.current.setAvailability(stemsRef.current);
+    }
+    return stemEngineRef.current;
+  }, [audioContext]);
+
+  /** What the engine should offer, readable from a callback that must not depend on it. */
+  const stemsRef = useRef<readonly StemAvailability[]>([]);
+
+  useEffect(() => {
+    stemsRef.current = stems;
+    stemEngineRef.current?.setAvailability(stems);
+    setStemStatuses(stemEngineRef.current?.statuses() ?? {});
+  }, [stems]);
+
+  useEffect(
+    () => () => {
+      hitSoundRef.current?.close();
+      stemEngineRef.current?.close();
+      void audioContextRef.current?.close();
+    },
+    [],
+  );
 
   const maxEventDurationSec = useMemo(
     () => (projection ? maxBoundedDuration(projection.events) : 0),
@@ -267,6 +344,11 @@ export default function App(): React.JSX.Element {
         `bass ${counts.byLane.bass}, vocals ${counts.byLane.vocals}` +
         (result.summary.analysisHashVerified ? " - hash verified" : ""),
     );
+
+    // A new project means new stems and a mixer that has never heard of the last one's.
+    // Everything decoded for the previous project is released with it.
+    setStems(result.stems);
+    setMixer(openMixer(result.stems.map((stem) => stem.id)));
 
     if (result.audioUrl) {
       audioRef.current?.element.pause();
@@ -918,14 +1000,93 @@ export default function App(): React.JSX.Element {
    * An effect rather than a call inside the slider handler, so a track loaded after the
    * volume was set still starts at that volume, and so a change lands mid-playback
    * without waiting for anything.
+   *
+   * The element now carries the mixer's Original track as well as the toolbar's master.
+   * It is *silenced*, never paused: it is the clock every other part of the Editor reads,
+   * so a stem playing instead of it must not stop time.
    */
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.element.volume = Math.min(1, Math.max(0, volume));
-    audio.element.muted = muted;
+    audio.element.volume =
+      Math.min(1, Math.max(0, volume)) * effectiveGain(mixer, ORIGINAL_TRACK_ID);
+    audio.element.muted = muted || !isOriginalAudible(mixer);
     audio.element.playbackRate = playbackRate;
-  }, [volume, muted, playbackRate, opened]);
+  }, [volume, muted, playbackRate, mixer, opened]);
+
+  /**
+   * Tell the stem engine what should be sounding.
+   *
+   * The master is folded in here rather than inside the mixer, so the toolbar's volume
+   * and mute govern the stems exactly as they always governed the original - an author
+   * who turns the music down gets the music turned down, whichever source it is coming
+   * from. The note clicks keep their own gain and are untouched, which is what makes
+   * charting against a quiet stem possible.
+   */
+  useEffect(() => {
+    const engine = stemEngineRef.current;
+    if (!engine) return;
+    const master = muted ? 0 : Math.min(1, Math.max(0, volume));
+    engine.setPlan(
+      routedStemIds(mixer).map((id) => ({ id, gain: master * effectiveGain(mixer, id) })),
+    );
+  }, [mixer, volume, muted]);
+
+  /**
+   * Line the stems up with the transport.
+   *
+   * Called from the playback loop and after anything that moves the playhead. It reads
+   * the element and writes nothing back, which is the whole of how the two stay in step:
+   * there is one clock, and this is a follower of it.
+   */
+  const syncStems = useCallback(() => {
+    const engine = stemEngineRef.current;
+    const audio = audioRef.current;
+    if (!engine || !audio) return;
+    engine.sync({
+      timeSec: audio.element.currentTime,
+      playing: !audio.element.paused,
+      rate: audio.element.playbackRate,
+    });
+  }, []);
+
+  /**
+   * Bring the stems in, or take them away, the moment the author asks.
+   *
+   * Builds the engine on the click that first needs it - which is a gesture, so the
+   * context is allowed to start - and then lets the effects above do the rest.
+   */
+  const withStemEngine = useCallback(
+    (change: (current: MixerState) => MixerState) => {
+      stemEngine();
+      setMixer(change);
+    },
+    [stemEngine],
+  );
+
+  const handleStemVolume = useCallback(
+    (id: string, value: number) => withStemEngine((m) => setTrackVolume(m, id, value)),
+    [withStemEngine],
+  );
+  const handleStemMute = useCallback(
+    (id: string) => withStemEngine((m) => toggleTrackMuted(m, id)),
+    [withStemEngine],
+  );
+  const handleStemSolo = useCallback(
+    (id: string) => withStemEngine((m) => toggleTrackSolo(m, id)),
+    [withStemEngine],
+  );
+  const handleListenToOriginal = useCallback(
+    () => withStemEngine(listenToOriginal),
+    [withStemEngine],
+  );
+
+  // A change to what is routed has to reach the sources immediately, not at the next
+  // frame: while paused there is no next frame, and a stem soloed at a standstill would
+  // stay silent until the author pressed play.
+  useEffect(() => {
+    syncStems();
+  }, [mixer, playing, playbackRate, stemStatuses, syncStems]);
 
   const handleToggleMute = useCallback(() => {
     setMuted((current) => !current);
@@ -960,7 +1121,12 @@ export default function App(): React.JSX.Element {
       schedulerRef.current = idleScheduler();
       setPlaying(false);
     }
-  }, [playheadSec]);
+    // Starting is a gesture, so this is where a context suspended by the browser gets
+    // resumed - without it the first play after a while would move the playhead in
+    // silence for anyone listening to a stem.
+    audioContext();
+    syncStems();
+  }, [playheadSec, audioContext, syncStems]);
 
   /**
    * The playback loop.
@@ -977,6 +1143,9 @@ export default function App(): React.JSX.Element {
       if (audio) {
         const now = audio.element.currentTime;
         setPlayheadSec(now);
+        // The stems follow the same clock, on the same frame, so they cannot disagree
+        // with the playhead about where the music is.
+        syncStems();
 
         if (hitSoundOn) {
           const step = advanceScheduler(schedulerRef.current, now, hitPointsRef.current);
@@ -1000,7 +1169,7 @@ export default function App(): React.JSX.Element {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing, hitSoundOn, hitSound]);
+  }, [playing, hitSoundOn, hitSound, syncStems]);
 
   /**
    * Move the playhead to a time, and take the audio element with it.
@@ -1009,13 +1178,19 @@ export default function App(): React.JSX.Element {
    * read, so a seek writes there and everything else follows. There is no second notion
    * of "where we are".
    */
-  const seekPlayheadTo = useCallback((timeSec: number) => {
-    setPlayheadSec(timeSec);
-    const audio = audioRef.current;
-    if (audio) audio.element.currentTime = timeSec;
-    // A jump is not playback: the notes passed over were not played and must not sound.
-    schedulerRef.current = resetSchedulerTo(timeSec);
-  }, []);
+  const seekPlayheadTo = useCallback(
+    (timeSec: number) => {
+      setPlayheadSec(timeSec);
+      const audio = audioRef.current;
+      if (audio) audio.element.currentTime = timeSec;
+      // A jump is not playback: the notes passed over were not played and must not sound.
+      schedulerRef.current = resetSchedulerTo(timeSec);
+      // A seek is a large drift, so the stems re-anchor on the same call rather than
+      // playing on from where they were until the next frame notices.
+      syncStems();
+    },
+    [syncStems],
+  );
 
   const handleSeek = useCallback(
     (timeSec: number) => seekPlayheadTo(timeSec),
@@ -1045,11 +1220,23 @@ export default function App(): React.JSX.Element {
   const auditionAt = useCallback((targetSec: number) => {
     const audio = audioRef.current;
     if (!audio) return;
+    // The stems are brought along, because an audition is playback: without this, an
+    // author arrow-keying through the song while listening to the bass would hear
+    // nothing at all - the element is silenced whenever a stem is routed, and the
+    // playback loop that normally keeps the stems in step is not running while paused.
     const media: AuditionMedia = {
-      play: () => audio.element.play(),
-      pause: () => audio.element.pause(),
+      play: () => {
+        const started = audio.element.play();
+        syncStems();
+        return started;
+      },
+      pause: () => {
+        audio.element.pause();
+        syncStems();
+      },
       setCurrentTime: (timeSec) => {
         audio.element.currentTime = timeSec;
+        syncStems();
       },
     };
     auditionRef.current.run(
@@ -1060,7 +1247,7 @@ export default function App(): React.JSX.Element {
         enabled: auditionOnRef.current,
       }),
     );
-  }, []);
+  }, [syncStems]);
 
   /**
    * One arrow-key step, sized to the current zoom.
@@ -1487,6 +1674,18 @@ export default function App(): React.JSX.Element {
                 onDelete={handleDeleteSelected}
               />
             ) : null
+          }
+          stemMixer={
+            <StemMixer
+              stems={stems}
+              mixer={mixer}
+              statuses={stemStatuses}
+              playbackRate={playbackRate}
+              onVolume={handleStemVolume}
+              onToggleMuted={handleStemMute}
+              onToggleSolo={handleStemSolo}
+              onListenToOriginal={handleListenToOriginal}
+            />
           }
         />
         <main className="stage">
