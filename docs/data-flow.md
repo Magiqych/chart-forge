@@ -92,7 +92,17 @@ Properties this stage must have:
 ## Stage 5 — Playback
 
 The Player plays the chart against the audio for verification. Its input is the Chart
-document; it produces no document of its own.
+document; it produces no document of its own, and it modifies nothing it reads.
+
+It is a game and not a viewer: the chart is flattened into **judgement points** — a tap
+is one, a long note is two, a slide is one per waypoint plus its ends — and each is
+played and judged. A Project document may be handed to it in place of a chart, purely so
+that the chart and the audio can be found; nothing else in the project reaches playback.
+
+How forgiving the judgement is, how fast the notes travel, which keys play which lane and
+how much this machine's audio lags are all **Player session settings**. None of them is
+chart data and none of them has a field in the contract: a chart carrying one machine's
+audio latency would be a chart that plays wrong on the next one.
 
 ## The Project document
 

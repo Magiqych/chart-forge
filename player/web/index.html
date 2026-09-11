@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>Chart Forge Player</title>
+    <!-- An empty data URL, so a browser asking for a favicon gets an answer instead of
+         a 404 in the console of a tool whose job is to show real problems. -->
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <header id="hud" class="hud" hidden>
+      <div class="hud-left">
+        <div id="hud-title" class="hud-title"></div>
+        <div id="hud-sub" class="hud-sub"></div>
+      </div>
+      <div class="hud-centre">
+        <div id="hud-score" class="hud-score">0</div>
+        <div id="hud-combo" class="hud-combo"></div>
+      </div>
+      <div class="hud-right">
+        <div id="hud-time" class="hud-time">0:00 / 0:00</div>
+        <div id="hud-counts" class="hud-counts"></div>
+      </div>
+      <div class="hud-progress"><div id="hud-progress-bar"></div></div>
+    </header>
+
+    <!-- The start screen. A browser will not start an AudioContext without a gesture, so
+         the button that begins the song is not a convenience: it is the gesture. -->
+    <section id="start" class="overlay">
+      <div class="panel">
+        <h1>Chart Forge <span>Player</span></h1>
+        <div id="start-status" class="status">Loading…</div>
+        <dl id="start-facts" class="facts"></dl>
+        <div id="start-problems" class="problems" hidden></div>
+        <div class="actions">
+          <button id="start-play" class="primary" disabled>Play</button>
+          <button id="start-autoplay" disabled>Autoplay</button>
+        </div>
+        <details id="start-open" class="open-box">
+          <summary>Open another project or chart</summary>
+          <p>Full path to a <code>.project.json</code> or <code>.chart.json</code> on this machine.</p>
+          <div class="open-row">
+            <input id="open-path" type="text" spellcheck="false" placeholder="D:\10.repo\chart-forge-work\projects\song-v2.project.json" />
+            <button id="open-go">Open</button>
+          </div>
+          <div id="open-error" class="open-error" hidden></div>
+        </details>
+        <p class="hint">
+          Lanes <b id="key-hint">D F Space J K</b> · hold <b>←</b>/<b>→</b> while pressing to flick that way ·
+          <b>Space bar is a lane</b>, so pause is <b>Esc</b> · <b>Tab</b> shows the controls
+        </p>
+      </div>
+    </section>
+
+    <section id="pause" class="overlay" hidden>
+      <div class="panel">
+        <h2>Paused</h2>
+        <div class="actions">
+          <button id="pause-resume" class="primary">Resume</button>
+          <button id="pause-restart">Restart</button>
+          <button id="pause-quit">Back to start</button>
+        </div>
+        <p class="hint">Esc resumes · Tab shows the controls</p>
+      </div>
+    </section>
+
+    <section id="result" class="overlay" hidden>
+      <div class="panel wide">
+        <h2 id="result-title">Result</h2>
+        <div id="result-score" class="result-score">0</div>
+        <div id="result-grid" class="result-grid"></div>
+        <div id="result-timing" class="result-timing"></div>
+        <div class="actions">
+          <button id="result-again" class="primary">Play again</button>
+          <button id="result-close">Close</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Practice controls. Deliberately always reachable during play: this Player exists
+         to check a chart, and half of that is stopping in the middle of it. -->
+    <aside id="controls" class="controls" hidden>
+      <div class="controls-head">
+        <span>Controls</span>
+        <button id="controls-close" class="ghost">Tab</button>
+      </div>
+
+      <div class="row transport">
+        <button id="c-play">▶ / ⏸</button>
+        <button id="c-restart">Restart</button>
+        <button id="c-back">−5s</button>
+        <button id="c-forward">+5s</button>
+        <button id="c-full">Fullscreen</button>
+      </div>
+
+      <label class="row">
+        <span>Position</span>
+        <input id="c-seek" type="range" min="0" max="1000" value="0" />
+        <output id="c-seek-out">0:00</output>
+      </label>
+
+      <label class="row">
+        <span>Song speed</span>
+        <select id="c-rate">
+          <option value="1">1.0×</option>
+          <option value="0.75">0.75×</option>
+          <option value="0.5">0.5×</option>
+          <option value="0.25">0.25×</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>Note speed</span>
+        <input id="c-speed" type="range" min="0.5" max="4" step="0.1" />
+        <output id="c-speed-out"></output>
+      </label>
+
+      <label class="row">
+        <span>Timing offset</span>
+        <input id="c-offset" type="range" min="-200" max="200" step="1" />
+        <output id="c-offset-out"></output>
+      </label>
+      <div class="row sub">
+        <button id="c-offset-apply" class="ghost" disabled>Use measured offset</button>
+        <span id="c-offset-hint" class="hint-inline"></span>
+      </div>
+
+      <label class="row"><span>Autoplay</span><input id="c-autoplay" type="checkbox" /></label>
+      <label class="row"><span>Hit sound</span><input id="c-hitsound" type="checkbox" /></label>
+      <label class="row"><span>Strict flick direction</span><input id="c-strict" type="checkbox" /></label>
+      <label class="row"><span>Show decorations</span><input id="c-decorations" type="checkbox" /></label>
+
+      <label class="row">
+        <span>Music volume</span>
+        <input id="c-volume" type="range" min="0" max="1" step="0.01" />
+      </label>
+
+      <div class="row transport">
+        <button id="c-loop-a">Set A</button>
+        <button id="c-loop-b">Set B</button>
+        <button id="c-loop-clear">Clear loop</button>
+      </div>
+      <div id="c-loop-state" class="hint-inline">Section loop off</div>
+
+      <div id="c-report" class="report"></div>
+    </aside>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

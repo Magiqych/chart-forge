@@ -1,8 +1,9 @@
 # Chart Forge
 
 > **Status: experimental / early-stage.**
-> This repository currently contains only boundaries, documentation and draft data
-> contracts. There is no implementation yet, and every schema is expected to change.
+> The schemas are draft contracts and are still expected to change. The Analyzer, the
+> Editor and the Player all exist and are usable; each is its own component in its own
+> stack, joined only by the JSON documents in [`schemas/`](schemas/).
 
 Chart Forge is a toolchain for producing **hand-authored rhythm-game charts** with
 machine assistance.
@@ -95,9 +96,12 @@ chart-forge/
 │  ├─ chart.schema.json
 │  └─ project.schema.json
 │
-├─ analyzer/                     audio → Analysis JSON            (not implemented)
-├─ editor/                       Analysis JSON → Chart JSON       (not implemented)
-├─ player/                       Chart JSON → playback            (not implemented)
+├─ analyzer/                     audio → Analysis JSON            (Python)
+├─ editor/                       Analysis JSON → Chart JSON       (React + Tauri)
+├─ player/                       Chart JSON → playback            (Node stdlib + browser)
+│
+├─ start-editor.cmd              launch the Editor  (Windows)
+├─ start-player.cmd              launch the Player  (Windows)
 │
 ├─ examples/                     minimal documents illustrating each schema
 │  ├─ analysis.example.json
@@ -106,6 +110,24 @@ chart-forge/
 │
 └─ tests/                        contract tests: python tests/validate_contracts.py
 ```
+
+## Running the tools
+
+On Windows, from the repository root:
+
+```text
+start-editor.cmd
+start-player.cmd "D:\path\to\song-v2.project.json"
+```
+
+`start-player.cmd` also accepts a `.chart.json`, takes a file dropped onto it, and opens
+a start screen when given nothing. The Player needs only Node.js and a browser - no
+install step and no build - so it starts in a second; the Editor builds a Tauri desktop
+shell and needs Node.js and the Rust toolchain. See [`editor/README.md`](editor/README.md)
+and [`player/README.md`](player/README.md).
+
+The Analyzer is a Python package run from the repository's own virtual environment; see
+[`analyzer/README.md`](analyzer/README.md).
 
 ## Target format
 
@@ -127,6 +149,9 @@ the same chart - so it lives in its own optional array with its own ids. See
 
 ## Non-goals for now
 
-No UI framework, desktop shell, ML framework, dependency manifest, CI or container setup
-has been chosen. Those decisions are deliberately deferred until the data model is
-stable. See [CLAUDE.md](CLAUDE.md).
+There is still no repository-wide language, build system, dependency manifest, CI or
+container setup, and there is not meant to be: each component chose its own stack when it
+needed one, and only for itself. The Editor picked React and Tauri; the Analyzer is a
+Python package; the Player deliberately picked nothing at all and is Node's standard
+library and a browser. Nothing binds the three together except the documents in
+[`schemas/`](schemas/). See [CLAUDE.md](CLAUDE.md).

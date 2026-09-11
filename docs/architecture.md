@@ -74,6 +74,16 @@ result be verified — visually, and eventually as actual gameplay.
 sees only the chart; if a chart plays badly, that is information for the author, not
 something the Player fixes.
 
+It does accept a Project document, and only for one thing: finding the chart and the
+audio. A project is where an author's files are actually associated, so requiring them to
+be dug out by hand would make a worse tool and buy no purity. Nothing else in the project
+reaches playback — the analysis is not read, the editor state is not read — and nothing
+is ever written back.
+
+**Likely implementation.** Whatever can be started without ceremony. It is currently a
+small local server on Node's standard library plus a browser application, with no
+dependency manifest and no build step. Nothing outside `player/` may assume this.
+
 ## Why the components are separate
 
 **Different lifecycles.** Analysis is slow, batch, and rerun rarely. Editing is

@@ -1,0 +1,77 @@
+{
+  "version": "0.1.0",
+  "metadata": {
+    "title": "Player test fixture",
+    "charter": "chart-forge tests"
+  },
+  "audio": {
+    "path": "mini.wav",
+    "durationSec": 8.0
+  },
+  "timing": {
+    "offsetSec": 0.0,
+    "bpm": 120.0,
+    "beatsPerBar": 4
+  },
+  "playfield": {
+    "laneCount": 5,
+    "profile": "generic"
+  },
+  "notes": [
+    { "id": "n-0001", "type": "tap", "timeSec": 1.0, "lane": 0 },
+    { "id": "n-0002", "type": "tap", "timeSec": 1.5, "lane": 2 },
+    { "id": "n-0003", "type": "hold", "timeSec": 2.0, "lane": 1, "endTimeSec": 3.0 },
+    { "id": "n-0004", "type": "flick", "timeSec": 2.5, "lane": 4, "direction": "right" },
+    { "id": "n-0005", "type": "flick", "timeSec": 2.75, "lane": 3, "direction": "left" },
+    {
+      "id": "n-0006",
+      "type": "hold",
+      "timeSec": 3.5,
+      "lane": 0,
+      "endTimeSec": 4.0,
+      "endAction": { "type": "flick", "direction": "left" }
+    },
+    {
+      "id": "n-0007",
+      "type": "slide",
+      "timeSec": 4.5,
+      "lane": 0,
+      "waypoints": [
+        { "timeSec": 4.75, "lane": 1 },
+        { "timeSec": 5.0, "lane": 2 }
+      ],
+      "endTimeSec": 5.25,
+      "endLane": 3
+    },
+    {
+      "id": "n-0008",
+      "type": "slide",
+      "timeSec": 6.0,
+      "lane": 4,
+      "endTimeSec": 6.5,
+      "endLane": 2,
+      "endAction": { "type": "flick", "direction": "right" }
+    },
+    { "id": "n-0009", "type": "hold", "timeSec": 6.75, "lane": 1, "endTimeSec": 7.75 }
+  ],
+  "connections": [{ "type": "flick", "fromNoteId": "n-0004", "toNoteId": "n-0005" }],
+  "decorations": [
+    {
+      "id": "dec-0001",
+      "type": "text",
+      "startTimeSec": 1.0,
+      "endTimeSec": 2.0,
+      "text": "READY",
+      "position": { "x": 0.5, "y": 0.4 },
+      "style": { "fontSize": 0.1, "color": "#ffffff" },
+      "animation": { "enter": "fade", "enterDurationSec": 0.25, "exit": "fade", "exitDurationSec": 0.25 }
+    },
+    {
+      "id": "dec-0002",
+      "type": "sticker",
+      "startTimeSec": 3.0,
+      "position": { "x": 0.2, "y": 0.7 }
+    }
+  ],
+  "extensions": {}
+}

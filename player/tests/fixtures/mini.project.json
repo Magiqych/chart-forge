@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "name": "Player test project",
+  "audio": {
+    "path": "mini.wav"
+  },
+  "chart": {
+    "kind": "file",
+    "path": "mini.chart.json"
+  }
+}
