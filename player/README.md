@@ -73,6 +73,51 @@ time makes it a held note, a direction makes it a flick — and is reported on t
 screen rather than silently turned into a tap. A decoration kind it does not know is
 skipped, and the chart plays exactly the same, which is what makes decorations optional.
 
+## What it looks like
+
+Five circular targets sit along the bottom of the screen, threaded by a single pale line,
+and the notes fly in from the distance and land exactly on them. There is nothing inside
+a target: in the game this playfield is modelled on there is a portrait there, but a
+Player whose job is to show a chart should not put anything behind the notes that
+competes with them — and that artwork is not ours to use. Everything on the playfield is
+drawn from arcs, gradients and strokes written out as numbers; no image is loaded and
+nothing is traced from anyone else's art.
+
+Every note is a circle: a coloured disc, a white rim, a thin dark edge so the rim survives
+a bright decoration behind it, and a mark in the middle. The four kinds are told apart
+three times over — by hue, by that mark, and by the band they trail — because a player
+falling towards a note has no time to study it:
+
+| | hue | centre | band |
+| --- | --- | --- | --- |
+| `tap` | red / coral | nothing | — |
+| `hold` | amber / orange | a white disc | wide, pale, almost white |
+| `slide` | violet | a white bar | narrower, violet, with a lit edge |
+| `flick` | blue | a white arrowhead | — |
+
+A note whose `endAction` is a flick has a **blue flick at its end**, with the arrow the
+end action names. Nothing else on the playfield would tell a player that the last thing
+they must do with a four-second hold is swipe it, and the contract is explicit that the
+end action describes the end rather than the note. A `direction` on the note itself
+belongs to its *start* and is never borrowed by its end.
+
+A type this Player has never seen keeps a grey style of its own, and is still drawn.
+
+The bands are not rectangles stretched down the screen. The visible part of the note's
+flight is sampled, every sample is projected through the same perspective the heads go
+through, and the band is filled between the resulting edges — so it is narrow and faint in
+the distance, widens as it comes, and a slide crossing three lanes bends the way its notes
+will actually travel. Its far edge is cut at the spawn line and faded out; its near edge
+is the playhead, so the part of a hold that has already been played is not left hanging
+below the targets. A note the judge has retired — everything before the point you seeked
+to, for instance — has no band either, because a band for a note that is not in the run
+would be the playfield disagreeing with the scoreboard.
+
+Everything is a fraction of the canvas, so the same playfield appears on a phone and on a
+4K monitor with nothing hard-coded, and the backing store is sized to `devicePixelRatio`.
+The **visible** target is smaller than the lane a press is read from: a thumb landing a
+little off still counts, and the lanes still never overlap.
+
 ## Judgement
 
 A chart is not judged note by note; it is judged at **points**. A note may be several:
@@ -151,13 +196,16 @@ player/
 │  ├─ main.js          the loop and the wiring, and nothing else
 │  ├─ chart.js         reading a Chart document into judgement points
 │  ├─ clock.js         the audio clock, and the hit sound
-│  ├─ layout.js        time → position, and which notes are worth drawing
+│  ├─ note-space.js    the 3D world notes fly through, and the projection onto a screen
+│  ├─ layout.js        which notes are worth drawing, and how long they are in the air
+│  ├─ note-theme.js    every colour, radius, stroke and glow, in one place
+│  ├─ note-renderer.js tap targets, note heads, ribbons, connections
 │  ├─ judge.js         the judgement engine
 │  ├─ input.js         keyboard, mouse and touch → one event shape
 │  ├─ autoplay.js      a perfect player, made of ordinary input events
 │  ├─ score.js         score, combo, timing statistics
 │  ├─ decorations.js   drawing the chart's decorations
-│  └─ render.js        the playfield
+│  └─ render.js        the frame: the background, and the order everything is painted in
 └─ tests/              node --test; pure logic only
 ```
 
@@ -168,10 +216,41 @@ at a known point on the audio context's own clock, so it is exact between frames
 correct at any playback rate. Nothing counts frames and nothing keeps a second idea of
 how far the song has got.
 
-**Position is a function of time.** `distance = (noteTime − chartTime) × speed`, projected
-through a fixed perspective. Nothing is integrated frame by frame, so a dropped frame
-puts a note where it should be rather than leaving it behind, and two machines at
-different frame rates draw the same chart identically.
+**Position is a function of time.** A note travels through a small three-dimensional
+world — a lane across, a depth into the picture, a height above the playfield — and what
+is drawn is that world through a pinhole. All of it is evaluated from one number, the
+*phase* of the flight:
+
+```text
+phase    = 1 − (noteTime − chartTime) / approach      0 as it appears, 1 as it arrives
+depth(p) = spawnDepth  + (tapDepth  − spawnDepth)  × p      constant velocity
+height(p)= spawnHeight + (tapHeight − spawnHeight)  × p²    falling from a standstill
+scale    = tapDepth / depth(p)                              exactly 1 at the tap line
+```
+
+Nothing is integrated frame by frame — there is no `position += velocity × dt` anywhere,
+and no state carried between frames at all. A dropped frame puts a note where it should
+be rather than leaving it behind; a seek is correct immediately because the position at
+40 s is computed *from* 40 s and never fast-forwarded to; a pause stops the notes because
+it stops the clock they are read from; and two machines at different frame rates draw the
+same chart identically. It is all one subtraction on the audio clock.
+
+The constants live in `WORLD` in [`web/note-space.js`](web/note-space.js) and are not
+pixels — only their ratios matter, because the projection is normalised onto whatever
+viewport it is given. A note is born at 0.45 of its final size and grows without a break
+to exactly 1 at the tap line, where it is the same size and in the same place as the
+target it lands on. Because the note is born a little above eye level it drifts very
+slightly *upward* for the first tenth of its flight before the fall takes over — a couple
+of pixels, felt rather than seen.
+
+That lift and the readability of a dense passage pull against each other: the deeper the
+lift, the more of the flight is crowded into the top of the screen, where notes a
+sixteenth apart begin to overlap. The values chosen sit where a stream of sixteenths
+still reads as separate notes, and the trade is written out where the constants are.
+
+`?debug=1` on the Player's URL draws the spawn and tap lines and the projected trajectory
+of every lane, which is how the geometry was tuned rather than guessed at. It is off
+everywhere else and prints nothing.
 
 **Input is abstracted at the source.** Keys, pointers and autoplay all produce the same
 event, and the judge has never heard of a keyboard. That is what makes autoplay
@@ -208,7 +287,12 @@ node --test "player/tests/*.test.mjs"
 ```
 
 Pure logic only: reading a chart, judgement points, every judgement rule, windowing,
-autoplay, scoring, settings and document resolution. The real chart this Player was built
+autoplay, scoring, settings, document resolution, and the geometry — the flight model, the
+projection, the sampling of a band, and which style each point of a note is drawn in, all
+of which are pure functions with no canvas in them. Most of the geometry tests are one
+idea in different clothes: the same chart time always produces the same position, at any
+frame rate, after a seek, while paused, and at any playback speed. The real chart this
+Player was built
 against is **not** in the repository and is never loaded by a test — it is the author's
 work, and a test that depended on it would break the moment they moved a note.
 [`tests/fixtures/mini.chart.json`](tests/fixtures/mini.chart.json) is a small chart
@@ -227,3 +311,8 @@ written for the tests, and it passes `python tests/validate_contracts.py --chart
 - **Scoring** is a flat share of a million over the judgement points, not any game's
   formula. A full combo is exactly 1,000,000 and anything less is something to go and
   look at, which is what a verification tool needs from a score.
+- **The playfield is not a copy of any game's.** It borrows the *shape* of the idea — five
+  round targets, round notes told apart by colour, a pseudo-3D approach — and none of the
+  rest: no portraits in the targets, no background video, no HUD layout, no hit burst, no
+  scoring curve. The flight is the physics written down in `note-space.js` tuned until it
+  reads right, which is a different thing from matching another game frame for frame.

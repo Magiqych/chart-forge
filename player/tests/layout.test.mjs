@@ -55,12 +55,42 @@ describe("time to position", () => {
     assert.ok(far.scale < 1, "the far end is smaller");
   });
 
-  it("moves monotonically down the screen as the note comes", () => {
-    let previous = -Infinity;
-    for (let p = 0; p <= 1.0001; p += 0.05) {
+  it("lifts a little as the note appears, and never by much", () => {
+    // The flight is not a straight line down the screen: a note is born above eye level,
+    // so for the first tenth of its journey the perspective carries it very slightly up
+    // before the fall takes over. That is the whole point of the three-dimensional model
+    // and it is deliberately small - a handful of pixels, felt rather than watched.
+    let highest = geometry.topY;
+    for (let p = 0; p <= 1.0001; p += 0.005) highest = Math.min(highest, positionOf(geometry, 0, p).y);
+    const lift = geometry.topY - highest;
+    assert.ok(lift > 0, "a note should rise slightly after it appears");
+    assert.ok(lift < (geometry.judgeY - geometry.topY) * 0.02, `the lift must stay subtle, was ${lift.toFixed(1)}px`);
+  });
+
+  it("descends without ever going back up, once it has started to fall", () => {
+    let highest = geometry.topY;
+    let apex = 0;
+    for (let p = 0; p <= 1.0001; p += 0.005) {
       const y = positionOf(geometry, 0, p).y;
-      assert.ok(y > previous, `y must increase at progress ${p.toFixed(2)}`);
+      if (y < highest) {
+        highest = y;
+        apex = p;
+      }
+    }
+    let previous = -Infinity;
+    for (let p = apex; p <= 1.0001; p += 0.005) {
+      const y = positionOf(geometry, 0, p).y;
+      assert.ok(y >= previous - 1e-9, `y must not rise again at progress ${p.toFixed(3)}`);
       previous = y;
+    }
+  });
+
+  it("grows all the way in, with no step backwards", () => {
+    let previous = -Infinity;
+    for (let p = 0; p <= 1.0001; p += 0.005) {
+      const { scale } = positionOf(geometry, 0, p);
+      assert.ok(scale > previous, `a note must never shrink, at progress ${p.toFixed(3)}`);
+      previous = scale;
     }
   });
 

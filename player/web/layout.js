@@ -1,37 +1,50 @@
 /**
- * Where a note is on screen at a given moment.
+ * When a note is on screen, and which notes are worth drawing at all.
  *
- * Every position here is a function of chart time and nothing else. Nothing is
- * integrated frame by frame, so a dropped frame moves a note to where it should be
- * rather than leaving it behind, and two machines running at different frame rates draw
- * the same chart identically. `positionOf(t)` is the whole model.
+ * The *where* moved to `note-space.js` when the flight became a three-dimensional one;
+ * this module keeps the two questions that are about time rather than about space - how
+ * long a note is in the air, and which of a chart's several hundred notes are in the air
+ * right now - and re-exports the geometry so that the modules and tests that only wanted
+ * "where is this note" still have one place to ask.
  *
- * Pure arithmetic, no canvas: the renderer asks this module where things are, and the
- * tests ask it the same questions without a browser.
+ * The rule both halves are built on is unchanged: every position is a function of chart
+ * time and nothing else. Nothing is integrated frame by frame, so a dropped frame moves a
+ * note to where it should be rather than leaving it behind, and two machines running at
+ * different frame rates draw the same chart identically.
  */
 
+import { flightPhase, projectionOf } from "./note-space.js";
+
+export {
+  WORLD,
+  flightPhase,
+  projectionOf,
+  playfieldGeometry,
+  laneCentreX,
+  positionOf,
+  positionBetween,
+  noteRadiusAt,
+  ribbonHalfWidth,
+  clipFlightSpan,
+  sampleRibbon,
+} from "./note-space.js";
+
 /**
- * How long a note is on screen before it reaches the judgement line, at speed 1.
+ * The approach: how long a note is on screen before it reaches the tap line, at speed 1.
  *
- * Around a beat and a half of a fast song. Faster speeds shorten it, which is what a
- * note-speed control does in every game of this kind: the note does not move faster
- * along the same path, it appears later and has less distance to cover.
+ * Around a beat and a half of a fast song. It is the *only* thing that decides when a note
+ * appears, and it is the same for every kind of note - a chart's `timeSec` says when a note
+ * must be hit, and the Player subtracts this to know when to start drawing it. Nothing in
+ * the geometry may give one kind of note a different arrival time from another.
+ *
+ * Faster note speeds shorten it, which is what a note-speed control does in every game of
+ * this kind: the note does not move faster along the same path, it appears later and has
+ * less distance to cover.
  */
 export const BASE_TRAVEL_SEC = 1.6;
 
 export const MIN_SPEED = 0.5;
 export const MAX_SPEED = 4;
-
-/**
- * Strength of the perspective.
- *
- * The playfield is a trapezoid: lanes converge towards the back, so a note starts small
- * near the horizon and grows as it comes. 0 would be a flat column layout.
- */
-export const DEPTH = 1.6;
-
-/** How far past the judgement line a note keeps being drawn, in depth units. */
-const MAX_OVERSHOOT = 0.35;
 
 export function travelSecFor(speed) {
   const clamped = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed));
@@ -39,75 +52,15 @@ export function travelSecFor(speed) {
 }
 
 /**
- * How far along its journey a moment is: 0 as it appears, 1 at the judgement line.
+ * How far along its journey a moment is: 0 as it appears, 1 at the tap line.
  *
- * Values above 1 are moments already past, which the renderer still draws briefly.
+ * The old name for `flightPhase`, kept because it reads better at the call sites that ask
+ * about a moment rather than about a note. They are the same function.
  */
-export function progressOf(timeSec, chartTimeSec, travelSec) {
-  if (!(travelSec > 0)) return 1;
-  return 1 - (timeSec - chartTimeSec) / travelSec;
-}
+export const progressOf = flightPhase;
 
-/**
- * The perspective projection, as a pure function of progress.
- *
- * A simple 1/z: depth `d` runs 1 at the back of the playfield to 0 at the judgement
- * line, the scale is `1/(1 + DEPTH*d)`, and the vertical position is that scale
- * normalised so the two ends land exactly on the top and the judgement line. The result
- * is that notes bunch towards the horizon and spread as they arrive, the way a lane
- * drawn in perspective has to.
- */
-export function project(progress) {
-  const depth = Math.max(-MAX_OVERSHOOT, 1 - progress);
-  const scale = 1 / (1 + DEPTH * depth);
-  const farScale = 1 / (1 + DEPTH);
-  return { scale, yNorm: (1 - scale) / (1 - farScale) };
-}
-
-/**
- * The fixed geometry of the playfield for a given canvas size.
- *
- * `judgeY` sits above the bottom edge so that hit effects and the judgement text have
- * somewhere to be, and the playfield's top is the horizon the notes come from.
- */
-export function playfieldGeometry(width, height, laneCount) {
-  const judgeY = height * 0.82;
-  const topY = height * 0.12;
-  const nearWidth = Math.min(width * 0.96, height * 1.25);
-  return {
-    width,
-    height,
-    laneCount: Math.max(1, laneCount),
-    centreX: width / 2,
-    judgeY,
-    topY,
-    nearWidth,
-    laneWidth: nearWidth / Math.max(1, laneCount),
-  };
-}
-
-/** The x of a lane's centre at the judgement line, where the perspective scale is 1. */
-export function laneCentreX(geometry, lane) {
-  const left = geometry.centreX - geometry.nearWidth / 2;
-  return left + (lane + 0.5) * geometry.laneWidth;
-}
-
-/** Where a moment in a lane is drawn, at a progress from `progressOf`. */
-export function positionOf(geometry, lane, progress) {
-  const { scale, yNorm } = project(progress);
-  const nearX = laneCentreX(geometry, lane);
-  return {
-    x: geometry.centreX + (nearX - geometry.centreX) * scale,
-    y: geometry.judgeY - yNorm * (geometry.judgeY - geometry.topY),
-    scale,
-  };
-}
-
-/** Where a point *between* two lanes is drawn - the body of a slide between waypoints. */
-export function positionBetween(geometry, laneA, laneB, mix, progress) {
-  const lane = laneA + (laneB - laneA) * mix;
-  return positionOf(geometry, lane, progress);
-}
+/** The perspective projection at a phase. See `projectionOf` in `note-space.js`. */
+export const project = projectionOf;
 
 /**
  * Binary search: the index after the last note that starts at or before `timeSec`.

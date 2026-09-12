@@ -34,6 +34,16 @@ const LAST_OPENED_KEY = "chart-forge-player/last-opened";
 const canvas = $("stage");
 const renderer = createRenderer(canvas);
 
+/**
+ * The flight overlay, for tuning the geometry rather than for playing.
+ *
+ * Opened with `?debug=1` on the Player's own URL and off in every other case, because a
+ * tool that draws its own scaffolding over the thing it is meant to show is a tool nobody
+ * can judge a chart with. It prints nothing to the console: a Player whose job is to
+ * surface real problems should not be filling the console with its own chatter.
+ */
+const DEBUG_OVERLAY = new URLSearchParams(window.location.search).get("debug") === "1";
+
 const state = {
   session: null,
   chart: null,
@@ -370,6 +380,7 @@ function tick() {
     feedback: state.feedback,
     laneDepth: state.judge ? state.judge.laneDepth : [],
     showDecorations: state.settings.showDecorations,
+    debug: DEBUG_OVERLAY,
   });
 
   updateHud(chartTimeSec);
