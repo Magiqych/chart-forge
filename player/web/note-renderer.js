@@ -202,7 +202,8 @@ export function drawNoteHead(ctx, position, style, options = {}) {
  * overlapping near the horizon and hue alone is not enough. On the two flick sides it says a
  * third thing as well, because `markColour` is dark on the left and white on the right: the
  * arrowhead flips from a hole in a bright disc to a bright shape on a deep one, which is a
- * difference that survives both distance and a colour vision difference.
+ * difference that survives both distance and a colour vision difference. Each arrowhead is
+ * the one that contrasts with its own body, so this is legibility and identity at once.
  */
 function drawMark(ctx, position, style, innerRadius, direction) {
   if (innerRadius < 2) return;
@@ -375,10 +376,10 @@ function traceBand(ctx, geometry, samples, widthFactor) {
  * with the canvas in it - and because two of those rules are contract decisions worth
  * being able to test directly:
  *
- *   - A note whose `endAction` is a flick has a **flick** at its end: violet, in the side
- *     the end action names, with its arrow. Nothing else on the playfield would tell a
- *     player that the last thing they have to do with a four-second hold is swipe it, and
- *     the contract is explicit that the end action is about the end rather than the note.
+ *   - A note whose `endAction` is a flick has a **flick** at its end: green, in the side the
+ *     end action names, with its arrow. Nothing else on the playfield would tell a player
+ *     that the last thing they have to do with a four-second hold is swipe it, and the
+ *     contract is explicit that the end action is about the end rather than the note.
  *   - A `direction` on the note itself belongs to its *start*, so it is drawn on the first
  *     point and never borrowed by the last one.
  */
@@ -411,11 +412,18 @@ export function noteMarks(note) {
 /**
  * The style a mark is drawn in.
  *
- * A flick with a sideways component is drawn in that side's violet - `flickLeft` or
+ * A flick with a sideways component is drawn in that side's green - `flickLeft` or
  * `flickRight` - and everything else in the style named after its kind. The side is resolved
- * here rather than in `noteMarks` on purpose: which of the two violets a swipe wears is a
+ * here rather than in `noteMarks` on purpose: which of the two greens a swipe wears is a
  * matter of how the note looks, while `noteMarks` answers what the note *is*, and the judge
  * and the autoplay both read a flick as one thing however it points.
+ *
+ * The last resort is the plain `flick`, which is the closest thing this Player has to "a note
+ * whose kind it could not place". There used to be a grey style for that, which is gone: it
+ * was unreachable - `noteKind` always answers with one of the four kinds, reading an unfamiliar
+ * `type` from the note's own fields - and a fifth grey identity on the playfield was a note
+ * kind the contract does not have. An unfamiliar type is still named on the start screen,
+ * which is where the contract asks for it to be reported.
  *
  * Exported so the mapping can be asked without a canvas.
  */
@@ -424,11 +432,22 @@ export function styleFor(name, direction = null) {
     const variant = NOTE_STYLES[FLICK_VARIANTS[direction]];
     if (variant) return variant;
   }
-  return NOTE_STYLES[name] ?? NOTE_STYLES.other;
+  return NOTE_STYLES[name] ?? NOTE_STYLES.flick;
 }
 
 /**
  * The ribbon of one note, if it has one. Drawn before every head, never over one.
+ *
+ * Two independent questions, and the bug was answering both with one:
+ *
+ *   - **Which colour?** The note's kind, and nothing else. A Long is amber all the way down
+ *     and a Slide is violet all the way down. This used to be decided by whether the note
+ *     crossed lanes, so a Long with an `endLane` grew an amber head on a violet band - the
+ *     playfield contradicting itself about what the note was.
+ *   - **How wide?** Whether the hand travels. A band that crosses lanes is drawn at the
+ *     narrower width, whatever its kind, because a wide band swinging sideways covers the
+ *     lanes either side of it. That the hand travels is visible anyway: the band bends across
+ *     the field, which is a thing no colour had to say.
  *
  * A note with nothing left to play has no band either. That matters after a seek: the judge
  * retires a note whose beginning is behind the new playhead - nobody was asked to play it,
@@ -440,11 +459,22 @@ export function drawNoteRibbon(ctx, geometry, note, chartTimeSec, approachSec, j
   if (points.length < 2) return;
   if (judge && !points.some((_, index) => judge.statusOf(`${note.id}#${index}`)?.state === "pending")) return;
 
-  const kind = noteKind(note);
-  const travels = kind === "slide" || note.endLane !== null || note.waypoints.length > 0;
-  const style = travels ? RIBBONS.slide : RIBBONS.hold;
+  const style = ribbonFor(note);
   const active = judge?.noteStateOf(note.id)?.holding === true;
   drawRibbon(ctx, geometry, points, chartTimeSec, approachSec, style, active);
+}
+
+/**
+ * The band of one note: its kind's colours, at the width its travel asks for.
+ *
+ * Pure, and exported, so both halves of the rule above can be asked without a canvas.
+ */
+export function ribbonFor(note) {
+  const kind = noteKind(note);
+  const colours = kind === "slide" ? RIBBONS.slide : RIBBONS.hold;
+  const travels = kind === "slide" || note.endLane !== null || note.waypoints.length > 0;
+  const widthFactor = travels ? SIZES.slideRibbon : SIZES.holdRibbon;
+  return widthFactor === colours.widthFactor ? colours : { ...colours, widthFactor };
 }
 
 /** The heads of one note: its start, its waypoints and its end. */

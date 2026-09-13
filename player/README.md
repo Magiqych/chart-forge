@@ -91,9 +91,9 @@ falling towards a note has no time to study it:
 | | hue | centre | band |
 | --- | --- | --- | --- |
 | `tap` | rose red, ~350° | nothing | — |
-| `hold` | amber, ~35° | a white disc | wide, amber |
-| `slide` | teal, ~170° | a white bar | narrower, teal, with a lit edge |
-| `flick` | violet, ~255–295° | an arrowhead | — |
+| `hold` | amber, ~39° | a white disc | wide, amber |
+| `slide` | violet, ~274° | a white bar | narrower, violet, with a lit edge |
+| `flick` | green, ~97–174° | an arrowhead | — |
 
 The four hues are kept at least ~45° apart, and all of them are kept out of the pale blue
 around 215° that the stage furniture is drawn in — the tap targets, the lane edges and the
@@ -102,24 +102,45 @@ carries its own note's hue for a related reason: a band is visible from further 
 a head is legible, so it is the playfield's earliest warning and it should say the same
 thing the heads will.
 
-**A flick's two sides are two violets.** A leftward swipe — `left`, `upLeft`, `downLeft` —
-is a warm, light orchid with a **dark** arrowhead; a rightward one — `right`, `upRight`,
-`downRight` — is a cool, deep indigo with a **white** arrowhead. Forty degrees of violet
-is not much to judge at speed, and it is exactly the difference a red-green colour vision
-difference flattens, so three more things carry it: a gap of roughly 19 L\* in lightness, a
-rim tinted pink-white against one tinted blue-white, and that flip of the arrowhead from
-dark-on-light to light-on-deep — which is the fastest-read difference on the note and
-needs no colour at all. A flick with no side to take (`up`, `down`, or no direction) keeps
-the neutral violet between the two.
+**A flick's two sides are two greens.** The family is green because the violet belongs to
+the slide and the pale blues belong to the stage, which leaves the greens as the one wide
+band of hue a flick can have to itself. A leftward swipe is a light chartreuse with a
+**dark** arrowhead; a rightward one is a deep teal with a **white** arrowhead. Hue is the
+first thing a colour vision difference flattens, so three more things carry the pair: a gap
+of about 31 L\* in lightness, so the two are still different in a greyscale photograph of
+the screen; a rim tinted yellow-white against one tinted mint-white, which is what carries
+in peripheral vision; and that flip of the arrowhead from dark-on-light to light-on-deep,
+which is the fastest-read difference on the note and needs no colour at all.
 
-A note whose `endAction` is a flick has a **violet flick at its end**, in the side the end
+### Which flicks get a colour of their own
+
+Two: `left` and `right`. The Chart contract's `direction` enumerates all eight compass
+points, and the Editor authors those two, so those two are the flicks a player meets.
+Every other direction the contract allows is still read, judged, and drawn with its own
+arrow — a diagonal takes the side it leans towards, since a hand swiping `upLeft` is going
+left — and `up`, `down` and a flick with no direction at all fall back to the plain flick
+green. That fallback is the kind's own colour, not a third identity: the playfield has five
+appearances (Single, Long, Slide, and a flick's two sides) and the Player does not invent a
+note kind the contract does not have.
+
+A note whose `endAction` is a flick has a **green flick at its end**, in the side the end
 action names, with its arrow. Nothing else on the playfield would tell a player that the
 last thing they must do with a four-second hold is swipe it, and the contract is explicit
 that the end action describes the end rather than the note. A `direction` on the note
 itself belongs to its *start* and is never borrowed by its end.
 
-A type this Player has never seen keeps a grey style of its own — the one style with no
-hue at all, so it cannot be read as any of the four — and is still drawn.
+### A type this Player has never met
+
+The contract calls `type` an open vocabulary and asks a Player to report an unfamiliar one
+rather than guess at it. So it is named on the start screen, and it is drawn by reading the
+note's own fields: a length makes it a Long, waypoints or an end lane make it a Slide, a
+direction makes it a Flick, and none of those makes it a Single. That is the same reading
+`judgePointsOf` does, which is why it is the right one — a note drawn as something the
+judge will not accept is worse than a note drawn plainly.
+
+There used to be a grey fifth style waiting for such a note. It is gone. It was
+unreachable, because the reading above always lands on one of the four, and a fifth grey
+identity on the playfield was a kind of note that does not exist.
 
 The bands are not rectangles stretched down the screen. The visible part of the note's
 flight is sampled, every sample is projected through the same perspective the heads go

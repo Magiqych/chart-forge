@@ -113,7 +113,7 @@ function describeChart(chart, payload) {
     ["Title", chart.title || payload.projectName || "(untitled)"],
     ["Chart", payload.chartPath ?? payload.openedPath],
     ["Audio", payload.audio ? payload.audio.path : "(not found)"],
-    ["Notes", `${summary.noteCount}  ·  tap ${summary.counts.tap} · long ${summary.counts.hold} · slide ${summary.counts.slide} · flick ${summary.counts.flick}${summary.counts.other ? ` · other ${summary.counts.other}` : ""}`],
+    ["Notes", `${summary.noteCount}  ·  tap ${summary.counts.tap} · long ${summary.counts.hold} · slide ${summary.counts.slide} · flick ${summary.counts.flick}`],
     ["Judged", `${summary.pointCount} points  ·  ${summary.connectionCount} connections  ·  ${summary.decorationCount} decorations`],
     ["Lanes", String(chart.laneCount)],
   ];
@@ -130,8 +130,8 @@ function describeChart(chart, payload) {
   const problems = [...(payload.warnings ?? []), ...chart.problems];
   if (chart.unknownNoteTypes.length > 0) {
     problems.push(
-      `note types this Player does not draw specially: ${chart.unknownNoteTypes.join(", ")} ` +
-        "(they are still judged, from their own fields)",
+      `note types this Player has not met: ${chart.unknownNoteTypes.join(", ")} ` +
+        "(each is read from its own fields, then drawn and judged as the kind it turns out to be)",
     );
   }
   const box = $("start-problems");

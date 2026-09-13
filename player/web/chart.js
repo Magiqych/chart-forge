@@ -336,14 +336,18 @@ export function readChart(document) {
   };
 }
 
-/** A quick census for the loading screen and the report line. */
+/**
+ * A quick census for the loading screen and the report line.
+ *
+ * Four counts, because `noteKind` answers with one of four kinds and nothing else - an
+ * unfamiliar `type` is read from the note's own fields rather than put in a bin of its own.
+ * There used to be an `other` count here for that bin; it could never be anything but zero,
+ * and a fifth number on the start screen implied a fifth kind of note that does not exist.
+ * The types this Player did not recognise are still named, separately, as a warning.
+ */
 export function chartSummary(chart) {
-  const counts = { tap: 0, hold: 0, slide: 0, flick: 0, other: 0 };
-  for (const note of chart.notes) {
-    const kind = noteKind(note);
-    if (kind in counts) counts[kind] += 1;
-    else counts.other += 1;
-  }
+  const counts = { tap: 0, hold: 0, slide: 0, flick: 0 };
+  for (const note of chart.notes) counts[noteKind(note)] += 1;
   return {
     noteCount: chart.notes.length,
     pointCount: chart.points.length,
