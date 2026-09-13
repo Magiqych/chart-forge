@@ -23,7 +23,7 @@ import {
   ribbonHalfWidth,
   sampleRibbon,
 } from "./note-space.js";
-import { SIZES, TAP_AREA, NOTE_STYLES, RIBBONS, CONNECTION } from "./note-theme.js";
+import { SIZES, TAP_AREA, NOTE_STYLES, FLICK_VARIANTS, RIBBONS, CONNECTION } from "./note-theme.js";
 
 const TAU = Math.PI * 2;
 
@@ -127,7 +127,7 @@ export function drawTapArea(ctx, geometry, laneDepth) {
 // ---------------------------------------------------------------------------
 
 /**
- * A round note: a coloured disc, a white rim, a dark edge, a mark in the middle.
+ * A round note: a coloured disc, a pale rim, a dark edge, a mark in the middle.
  *
  * The rim and the dark edge are both fractions of the radius, so a note two hundred pixels
  * away and a note at the tap line are the same drawing at two sizes rather than two
@@ -147,7 +147,8 @@ export function drawNoteHead(ctx, position, style, options = {}) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  // The white body, with the note's own colour thrown onto the sky behind it.
+  // The rim, with the note's own colour thrown onto the sky behind it. White on most kinds
+  // and tinted on the two flick sides, which is one of the things that tells them apart.
   ctx.shadowColor = style.glow;
   ctx.shadowBlur = radius * SIZES.glow;
   ctx.fillStyle = style.ring;
@@ -172,8 +173,8 @@ export function drawNoteHead(ctx, position, style, options = {}) {
   ctx.arc(position.x, position.y, innerRadius, 0, TAU);
   ctx.fill();
 
-  // A thin dark edge around the rim. Without it the white ring disappears the moment a
-  // decoration puts something pale behind the playfield.
+  // A thin dark edge around the rim. Without it the rim disappears the moment a decoration
+  // puts something pale behind the playfield.
   const outline = Math.max(0.6, radius * SIZES.outlineWidth);
   ctx.strokeStyle = style.outline;
   ctx.lineWidth = outline;
@@ -198,7 +199,10 @@ export function drawNoteHead(ctx, position, style, options = {}) {
  * The thing in the middle of a note that says which of the four it is.
  *
  * The hue already says it; this says it a second time, for the moment when three notes are
- * overlapping near the horizon and hue alone is not enough.
+ * overlapping near the horizon and hue alone is not enough. On the two flick sides it says a
+ * third thing as well, because `markColour` is dark on the left and white on the right: the
+ * arrowhead flips from a hole in a bright disc to a bright shape on a deep one, which is a
+ * difference that survives both distance and a colour vision difference.
  */
 function drawMark(ctx, position, style, innerRadius, direction) {
   if (innerRadius < 2) return;
@@ -371,10 +375,10 @@ function traceBand(ctx, geometry, samples, widthFactor) {
  * with the canvas in it - and because two of those rules are contract decisions worth
  * being able to test directly:
  *
- *   - A note whose `endAction` is a flick has a **flick** at its end: blue, with the arrow
- *     the end action names. Nothing else on the playfield would tell a player that the
- *     last thing they have to do with a four-second hold is swipe it, and the contract is
- *     explicit that the end action is about the end rather than about the note.
+ *   - A note whose `endAction` is a flick has a **flick** at its end: violet, in the side
+ *     the end action names, with its arrow. Nothing else on the playfield would tell a
+ *     player that the last thing they have to do with a four-second hold is swipe it, and
+ *     the contract is explicit that the end action is about the end rather than the note.
  *   - A `direction` on the note itself belongs to its *start*, so it is drawn on the first
  *     point and never borrowed by the last one.
  */
@@ -404,7 +408,22 @@ export function noteMarks(note) {
   });
 }
 
-function styleFor(name) {
+/**
+ * The style a mark is drawn in.
+ *
+ * A flick with a sideways component is drawn in that side's violet - `flickLeft` or
+ * `flickRight` - and everything else in the style named after its kind. The side is resolved
+ * here rather than in `noteMarks` on purpose: which of the two violets a swipe wears is a
+ * matter of how the note looks, while `noteMarks` answers what the note *is*, and the judge
+ * and the autoplay both read a flick as one thing however it points.
+ *
+ * Exported so the mapping can be asked without a canvas.
+ */
+export function styleFor(name, direction = null) {
+  if (name === "flick" && direction !== null) {
+    const variant = NOTE_STYLES[FLICK_VARIANTS[direction]];
+    if (variant) return variant;
+  }
   return NOTE_STYLES[name] ?? NOTE_STYLES.other;
 }
 
@@ -440,7 +459,7 @@ export function drawNoteHeads(ctx, geometry, note, chartTimeSec, approachSec, ju
     if (status && status.state !== "pending") continue;
 
     const position = positionOf(geometry, mark.lane, phase);
-    drawNoteHead(ctx, position, styleFor(mark.style), {
+    drawNoteHead(ctx, position, styleFor(mark.style, mark.direction), {
       radius: noteRadiusAt(geometry, position.scale, mark.size),
       direction: mark.direction,
       alpha: phase > 1 ? Math.max(0, 1 - (phase - 1) * FADE_RATE) : 1,

@@ -83,25 +83,43 @@ competes with them — and that artwork is not ours to use. Everything on the pl
 drawn from arcs, gradients and strokes written out as numbers; no image is loaded and
 nothing is traced from anyone else's art.
 
-Every note is a circle: a coloured disc, a white rim, a thin dark edge so the rim survives
+Every note is a circle: a coloured disc, a pale rim, a thin dark edge so the rim survives
 a bright decoration behind it, and a mark in the middle. The four kinds are told apart
 three times over — by hue, by that mark, and by the band they trail — because a player
 falling towards a note has no time to study it:
 
 | | hue | centre | band |
 | --- | --- | --- | --- |
-| `tap` | red / coral | nothing | — |
-| `hold` | amber / orange | a white disc | wide, pale, almost white |
-| `slide` | violet | a white bar | narrower, violet, with a lit edge |
-| `flick` | blue | a white arrowhead | — |
+| `tap` | rose red, ~350° | nothing | — |
+| `hold` | amber, ~35° | a white disc | wide, amber |
+| `slide` | teal, ~170° | a white bar | narrower, teal, with a lit edge |
+| `flick` | violet, ~255–295° | an arrowhead | — |
 
-A note whose `endAction` is a flick has a **blue flick at its end**, with the arrow the
-end action names. Nothing else on the playfield would tell a player that the last thing
-they must do with a four-second hold is swipe it, and the contract is explicit that the
-end action describes the end rather than the note. A `direction` on the note itself
-belongs to its *start* and is never borrowed by its end.
+The four hues are kept at least ~45° apart, and all of them are kept out of the pale blue
+around 215° that the stage furniture is drawn in — the tap targets, the lane edges and the
+stars. A note sharing that hue would be competing with the floor it lands on. Each band
+carries its own note's hue for a related reason: a band is visible from further away than
+a head is legible, so it is the playfield's earliest warning and it should say the same
+thing the heads will.
 
-A type this Player has never seen keeps a grey style of its own, and is still drawn.
+**A flick's two sides are two violets.** A leftward swipe — `left`, `upLeft`, `downLeft` —
+is a warm, light orchid with a **dark** arrowhead; a rightward one — `right`, `upRight`,
+`downRight` — is a cool, deep indigo with a **white** arrowhead. Forty degrees of violet
+is not much to judge at speed, and it is exactly the difference a red-green colour vision
+difference flattens, so three more things carry it: a gap of roughly 19 L\* in lightness, a
+rim tinted pink-white against one tinted blue-white, and that flip of the arrowhead from
+dark-on-light to light-on-deep — which is the fastest-read difference on the note and
+needs no colour at all. A flick with no side to take (`up`, `down`, or no direction) keeps
+the neutral violet between the two.
+
+A note whose `endAction` is a flick has a **violet flick at its end**, in the side the end
+action names, with its arrow. Nothing else on the playfield would tell a player that the
+last thing they must do with a four-second hold is swipe it, and the contract is explicit
+that the end action describes the end rather than the note. A `direction` on the note
+itself belongs to its *start* and is never borrowed by its end.
+
+A type this Player has never seen keeps a grey style of its own — the one style with no
+hue at all, so it cannot be read as any of the four — and is still drawn.
 
 The bands are not rectangles stretched down the screen. The visible part of the note's
 flight is sampled, every sample is projected through the same perspective the heads go
