@@ -63,6 +63,18 @@ DEFAULT_MODEL = MODEL
 STEM_NAMES = MODEL_STEMS[MODEL]
 STEM_FILENAME = "{0}.wav"
 
+#: The knobs `apply_model` is turned with, in one place because they are a cache key.
+#:
+#: Written down as data rather than passed as literals at the call site, so that the stem
+#: cache can compare what produced the stems on disk against what this run would do.
+#: Anything in here that changes changes the audio that comes out, and therefore every
+#: event derived from it - which is exactly what makes stale stems worth catching.
+SETTINGS = {
+    "shifts": 1,
+    "split": True,
+    "overlap": 0.25,
+}
+
 
 def stem_names(model=MODEL):
     """What `model` produces, in the Analyzer's order."""
@@ -107,7 +119,7 @@ class SeparationResult(NamedTuple):
     seconds: float
     max_cuda_allocated: int
     max_cuda_reserved: int
-    mode: str                 # "generated" or "supplied"
+    mode: str                 # "generated", "reused" or "supplied"
     stems_dir: Path
     #: Which checkpoint produced them. Empty for supplied stems, whose origin the
     #: Analyzer cannot verify. Defaulted so a caller that predates six-stem separation -
@@ -146,7 +158,7 @@ def separate(audio_path, stems_dir, device="cuda", model_name=MODEL) -> Separati
     started = time.perf_counter()
     sources = apply_model(
         model, normalised[None], device=torch.device(device),
-        shifts=1, split=True, overlap=0.25, progress=False,
+        progress=False, **SETTINGS,
     )[0]
     torch.cuda.synchronize()
     seconds = time.perf_counter() - started
@@ -289,4 +301,34 @@ def load_supplied(stems_dir, source_duration_sec, model_name=MODEL) -> Separatio
         mode="supplied",
         stems_dir=stems_dir,
         model="",
+    )
+
+
+def reuse_cached(stems_dir, stem_paths, model_name) -> SeparationResult:
+    """Adopt stems this Analyzer generated earlier and has just re-verified.
+
+    A third mode beside generating and pinning, and it is genuinely a third thing. Pinned
+    stems come from outside and their origin is unverifiable, so the document says so.
+    These were produced by this tool, from this audio, with this checkpoint and these
+    settings - all of which was checked against the asset manifest before we got here - so
+    the provenance is the same claim a fresh separation would make, and only the words
+    "separation ran on this invocation" stop being true.
+
+    Nothing is read beyond one stem's header, for the sample rate the result carries. The
+    caller has already confirmed every file is present and hashes as recorded; re-reading
+    them here would be a second, weaker version of that.
+    """
+    stem_paths = {name: Path(path) for name, path in stem_paths.items()}
+    if not stem_paths:
+        raise ValueError("reuse_cached needs at least one stem")
+    first = next(iter(stem_paths.values()))
+    return SeparationResult(
+        stem_paths=stem_paths,
+        sample_rate=int(sf.info(str(first)).samplerate),
+        seconds=0.0,
+        max_cuda_allocated=0,
+        max_cuda_reserved=0,
+        mode="reused",
+        stems_dir=Path(stems_dir),
+        model=model_name,
     )

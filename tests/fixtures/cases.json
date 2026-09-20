@@ -318,6 +318,11 @@
       "name": "chart: an effects group that asks for nothing",
       "expect": [],
       "documents": { "chart": "tests/fixtures/valid/chart-decoration-effects-empty.json" }
+    },
+    {
+      "name": "analysis: an asset root's six-stem document, referenced relatively",
+      "expect": [],
+      "documents": { "analysis": "tests/fixtures/valid/analysis-asset-root-six-stems.json" }
     }
   ]
 }

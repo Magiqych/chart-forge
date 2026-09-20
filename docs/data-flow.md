@@ -33,6 +33,39 @@ a `sha256` so a consumer can tell that the audio changed after a document was wr
 
 Audio files are not committed to this repository (see `.gitignore`).
 
+### Where the audio and the stems are stored
+
+The rule is **heavy assets follow the source audio**. The recording is the largest thing in
+the system and the stems separated from it are larger still - six of them come to several
+times its size - so both live on whichever drive already holds the music, never wherever a
+checkout or a project file happens to sit.
+
+An Analyzer run therefore writes into an **asset root** derived from the audio's own path:
+a hidden `.chart-forge` directory beside the recording, with one directory per song inside
+it holding `analysis.json`, an asset manifest and `stems/`.
+
+```text
+<music directory>/
+├─ Song.wav                       the source audio, never copied
+└─ .chart-forge/song/
+   ├─ analysis.json
+   ├─ asset-manifest.json
+   └─ stems/{vocals,drums,bass,guitar,piano,other}.wav
+```
+
+The source audio is **not** copied into that directory. It stays the only original, and the
+Analysis document refers to it relatively (`../../Song.wav`).
+
+`analysis.json` is the entry point for everything below it, because the contract already
+says so: `audio.path` and `stems[].path` are "relative to this document unless absolute", so
+the asset root is the directory the document lives in. A consumer that has the Analysis
+document has the stems, and neither the Project document nor the Editor's state needs its own
+copy of those paths.
+
+The asset manifest is the Analyzer's own bookkeeping, not part of this contract: it records
+what is stored in that directory and how it was produced, so a second run can tell whether
+the stems may be reused. No other component reads it.
+
 ## Stage 2 — Analysis JSON
 
 Produced by the Analyzer, consumed by the Editor.
@@ -124,6 +157,13 @@ or
 ```json
 { "kind": "inline", "data": { "...": "the document itself" } }
 ```
+
+A project on one drive may reference an asset root on another - a project file on `D:`
+beside the music on `C:` is the ordinary case on a machine whose system drive holds the
+library. Windows has no relative path between two drives, so that reference is absolute.
+It is **one** absolute path, at the boundary between the drives, and everything inside the
+asset root stays relative to the Analysis document: a project must not carry a list of
+stem paths of its own.
 
 **File references are the default.** An analysis of a full song can contain thousands of
 events and become far larger than everything else in the project; embedding it forces

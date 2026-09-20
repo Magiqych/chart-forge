@@ -14,16 +14,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ORIGINAL_TRACK_ID, anySolo, anyStemRouted, describeListening, effectiveGain,
-  isOriginalAudible, isRouted, listenToOriginal, openMixer, routedStemIds, setMuted,
-  setSolo, setVolume, toggleMuted, toggleSolo, withStems,
+  ORIGINAL_TRACK_ID, ORIGINAL_TRACK_LABEL, anySolo, anyStemRouted, describeListening,
+  effectiveGain, isOriginalAudible, isRouted, listenToOriginal, openMixer, routedStemIds,
+  setMuted, setSolo, setVolume, stemLabelFor, toggleMuted, toggleSolo, withStems,
 } from "./stemMixer";
 
 const STEMS = ["stem-drums", "stem-bass", "stem-other", "stem-vocals"];
 const fresh = () => openMixer(STEMS);
 
 const LABELS = {
-  [ORIGINAL_TRACK_ID]: "Original",
+  [ORIGINAL_TRACK_ID]: ORIGINAL_TRACK_LABEL,
   "stem-drums": "Drums",
   "stem-bass": "Bass",
   "stem-other": "Other",
@@ -88,7 +88,7 @@ describe("soloing the bass, which is what this is for", () => {
 
     expect(isOriginalAudible(back)).toBe(true);
     expect(routedStemIds(back)).toEqual([]);
-    expect(describeListening(back, LABELS)).toBe("Original");
+    expect(describeListening(back, LABELS)).toBe("Mix");
   });
 
   it("keeps playing the bass alone when its fader is moved", () => {
@@ -274,5 +274,83 @@ describe("opening another project", () => {
 
   it("always keeps the original, even for a project with no stems at all", () => {
     expect(withStems(fresh(), []).tracks[ORIGINAL_TRACK_ID]).toBeDefined();
+  });
+});
+
+/**
+ * The set an ordinary run now produces, named as the panel names it.
+ *
+ * Worth a block of its own because it is a promise to the author rather than a property of
+ * the arithmetic: open a project analysed today and there are seven things you can listen
+ * to, called Mix, Vocals, Drums, Bass, Guitar, Piano and Other. Nothing above pins the
+ * names or the count, so nothing above would notice them regressing.
+ */
+describe("the standard six-stem set", () => {
+  const KINDS = ["vocals", "drums", "bass", "guitar", "piano", "other"] as const;
+  const IDS = KINDS.map((kind) => `stem-${kind}`);
+
+  const availability = () =>
+    KINDS.map((kind) => ({
+      id: `stem-${kind}`,
+      label: stemLabelFor(kind, `stem-${kind}`),
+      url: `asset://stems/${kind}.wav`,
+    }));
+
+  it("offers Mix plus the six stems, and nothing else", () => {
+    const state = openMixer(IDS);
+    const labels = [
+      ORIGINAL_TRACK_LABEL,
+      ...availability().map((stem) => stem.label),
+    ];
+
+    expect(Object.keys(state.tracks).sort()).toEqual([ORIGINAL_TRACK_ID, ...IDS].sort());
+    expect(labels).toEqual(["Mix", "Vocals", "Drums", "Bass", "Guitar", "Piano", "Other"]);
+  });
+
+  it("opens on the Mix alone, with every stem silent until asked for", () => {
+    const state = openMixer(IDS);
+    expect(describeListening(state, {})).toBe("Mix");
+    expect(routedStemIds(state)).toEqual([]);
+    for (const id of IDS) expect(effectiveGain(state, id)).toBe(0);
+  });
+
+  it("can solo, mute and unmute each of the six independently", () => {
+    for (const id of IDS) {
+      const soloed = setSolo(openMixer(IDS), id, true);
+      expect(routedStemIds(soloed)).toEqual([id]);
+      expect(isOriginalAudible(soloed)).toBe(false);
+
+      // Mute beats Solo, on every row, and lifting it brings the row straight back.
+      const muted = setMuted(soloed, id, true);
+      expect(effectiveGain(muted, id)).toBe(0);
+      expect(effectiveGain(setMuted(muted, id, false), id)).toBe(1);
+    }
+  });
+
+  it("can listen to guitar and piano together, which is what the guides are for", () => {
+    let state = openMixer(IDS);
+    state = setSolo(state, "stem-guitar", true);
+    state = setSolo(state, "stem-piano", true);
+
+    expect(routedStemIds(state)).toEqual(["stem-guitar", "stem-piano"]);
+    expect(isOriginalAudible(state)).toBe(false);
+    expect(describeListening(state, { "stem-guitar": "Guitar", "stem-piano": "Piano" }))
+      .toBe("Guitar + Piano");
+  });
+
+  it("labels an unknown stem kind rather than dropping it", () => {
+    // `kind` is an open vocabulary. A separator that yields something new gets a row.
+    expect(stemLabelFor("strings", "stem-strings")).toBe("Strings");
+    expect(stemLabelFor("", "stem-7")).toBe("stem-7");
+  });
+
+  it("goes back to the Mix in one gesture from anywhere", () => {
+    let state = openMixer(IDS);
+    for (const id of IDS) state = setSolo(state, id, true);
+    expect(routedStemIds(state)).toHaveLength(6);
+
+    state = listenToOriginal(state);
+    expect(routedStemIds(state)).toEqual([]);
+    expect(describeListening(state, {})).toBe("Mix");
   });
 });

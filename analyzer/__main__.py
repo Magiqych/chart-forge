@@ -1,4 +1,4 @@
-"""Allows `python -m analyzer <audio-file> --output-dir <directory>`."""
+"""Allows `python -m analyzer <audio-file>`."""
 
 import sys
 

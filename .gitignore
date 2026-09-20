@@ -28,6 +28,12 @@ stems/
 separated/
 *.stem.*
 
+# A song's Chart Forge asset root. It normally lives beside the recording, on whichever
+# drive holds the music, and so is nowhere near this checkout - but an --output-dir aimed
+# here would drop 200 MB of stems into the working tree, so the directory is named rather
+# than relied upon to be elsewhere. Scoped to that one directory name, not a blanket rule.
+.chart-forge/
+
 # Analyzer caches / heavy intermediate artefacts
 cache/
 .cache/

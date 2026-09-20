@@ -920,9 +920,9 @@ STILL OPEN
   G9  normalized prominence
 ```
 
-Phase 1 is no longer a set of isolated experiments: `python -m analyzer <audio>
---output-dir <dir>` runs the whole chain and writes a contract-valid Analysis 0.2
-document. See [`../analyzer/README.md`](../analyzer/README.md).
+Phase 1 is no longer a set of isolated experiments: `python -m analyzer <audio>` runs the
+whole chain and writes a contract-valid Analysis 0.2 document, into an asset root derived
+from the audio's own location. See [`../analyzer/README.md`](../analyzer/README.md).
 
 ### What the first formal runs showed
 
@@ -970,7 +970,7 @@ That last sentence is now actionable. `--stems-dir` runs the pipeline from stems
 already exist, skipping htdemucs entirely:
 
 ```text
-python -m analyzer <audio> --output-dir <dir> --stems-dir <existing-stems>
+python -m analyzer <audio> --stems-dir <existing-stems>
 ```
 
 The audio argument stays required - it supplies `audio.sha256`, the ingest metadata and

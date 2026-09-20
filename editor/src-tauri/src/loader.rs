@@ -668,6 +668,66 @@ mod tests {
     }
 
     #[test]
+    fn resolves_an_asset_root_reached_by_an_absolute_path() {
+        // The layout an ordinary Analyzer run now produces, and the one case relative
+        // paths cannot cover: the project file lives on one drive and the song's asset
+        // root on another, so the project names the analysis absolutely. Everything
+        // *inside* the asset root stays relative - one absolute path, not seven - and has
+        // to resolve against the analysis document rather than against the project.
+        //
+        // Two temporary trees stand in for two drives. The mechanism under test is the
+        // same either way: an absolute reference out, relative references within.
+        let projects = temp_dir("cross-root-projects");
+        let assets = temp_dir("cross-root-assets");
+
+        write(&assets.join("Song.wav"), "the recording, where the user left it");
+        for stem in ["vocals", "drums", "bass", "guitar", "piano", "other"] {
+            write(&assets.join(format!(".chart-forge/song/stems/{stem}.wav")), "RIFF....");
+        }
+        write(
+            &assets.join(".chart-forge/song/analysis.json"),
+            r##"{"version":"0.2.0","audio":{"path":"../../Song.wav","durationSec":1},
+                 "events":[],
+                 "stems":[{"id":"stem-vocals","kind":"vocals","path":"stems/vocals.wav"},
+                          {"id":"stem-drums","kind":"drums","path":"stems/drums.wav"},
+                          {"id":"stem-bass","kind":"bass","path":"stems/bass.wav"},
+                          {"id":"stem-guitar","kind":"guitar","path":"stems/guitar.wav"},
+                          {"id":"stem-piano","kind":"piano","path":"stems/piano.wav"},
+                          {"id":"stem-other","kind":"other","path":"stems/other.wav"}]}"##,
+        );
+
+        let analysis_reference =
+            assets.join(".chart-forge/song/analysis.json").display().to_string().replace('\\', "/");
+        write(
+            &projects.join("song.project.json"),
+            &format!(
+                r#"{{"version":"0.2.0","audio":{{"path":"x.wav"}},
+                     "analysis":{{"kind":"file","path":"{analysis_reference}"}}}}"#
+            ),
+        );
+
+        let loaded =
+            load_project(projects.join("song.project.json").to_str().unwrap()).unwrap();
+
+        let audio = loaded.audio_path.expect("the recording resolves out of the asset root");
+        assert!(audio.replace('\\', "/").ends_with("Song.wav"), "got {audio}");
+
+        assert_eq!(loaded.stems.len(), 6, "all six stems are offered");
+        let kinds: Vec<&str> = loaded.stems.iter().map(|s| s.kind.as_str()).collect();
+        assert_eq!(kinds, ["vocals", "drums", "bass", "guitar", "piano", "other"]);
+        for stem in &loaded.stems {
+            let path = stem.path.as_ref().unwrap_or_else(|| {
+                panic!("{} resolved against the analysis, not the project", stem.id)
+            });
+            assert!(
+                path.replace('\\', "/").contains(".chart-forge/song/stems/"),
+                "{} landed outside the asset root: {path}",
+                stem.id
+            );
+        }
+    }
+
+    #[test]
     fn resolves_audio_relative_to_the_analysis() {
         let root = temp_dir("audio-ref");
         write(&root.join("audio/song.wav"), "not really audio, but it exists");

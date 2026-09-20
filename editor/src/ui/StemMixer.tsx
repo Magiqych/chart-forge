@@ -1,7 +1,7 @@
 /**
  * Choosing what to listen to while charting.
  *
- * One row per source, the original first and then whatever the Analyzer separated. Each
+ * One row per source - Mix first, then whatever the Analyzer separated. Each
  * row has the three controls a mixing desk has - a fader, Mute, Solo - because that is
  * what they are, and inventing new names for them would only make an author guess.
  *
@@ -11,8 +11,8 @@
  */
 
 import {
-  ORIGINAL_TRACK_ID, anyStemRouted, describeListening, isOriginalAudible, isRouted,
-  type MixerState, type StemAvailability,
+  ORIGINAL_TRACK_ID, ORIGINAL_TRACK_LABEL, anyStemRouted, describeListening,
+  isOriginalAudible, isRouted, type MixerState, type StemAvailability,
 } from "../core/stemMixer";
 import type { StemLoadStatus } from "../audio/stemEngine";
 
@@ -122,7 +122,7 @@ export function StemMixer(
   // existed - simply has no mixer, rather than an empty one to explain.
   if (stems.length === 0) return null;
 
-  const labels: Record<string, string> = { [ORIGINAL_TRACK_ID]: "Original" };
+  const labels: Record<string, string> = { [ORIGINAL_TRACK_ID]: ORIGINAL_TRACK_LABEL };
   for (const stem of stems) labels[stem.id] = stem.label;
 
   const listening = describeListening(mixer, labels);
@@ -141,7 +141,7 @@ export function StemMixer(
       <ul>
         <Row
           id={ORIGINAL_TRACK_ID}
-          label="Original"
+          label={ORIGINAL_TRACK_LABEL}
           mixer={mixer}
           note={null}
           disabled={false}

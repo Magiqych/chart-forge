@@ -1,0 +1,59 @@
+{
+  "version": "0.2.0",
+  "generator": {
+    "name": "chart-forge-analyzer",
+    "version": "0.1.0",
+    "createdAt": "2026-09-20T00:00:00Z",
+    "parameters": {
+      "separation": {
+        "mode": "generated",
+        "separationRun": true,
+        "package": "demucs-infer",
+        "version": "4.2.2",
+        "model": "htdemucs_6s",
+        "stems": ["vocals", "drums", "bass", "guitar", "piano", "other"],
+        "device": "cuda:0"
+      }
+    }
+  },
+  "audio": {
+    "path": "../../Song With Spaces.wav",
+    "sha256": "c6f4c1b4a4b3f4bb0aa4de03e1ee2edb2e1cfcbdb5f3eaa4bd3b0c8bb5a1e7d9",
+    "durationSec": 194.8,
+    "sampleRate": 48000,
+    "channels": 2
+  },
+  "detectors": [
+    { "id": "det-pluck-onset", "name": "chart-forge pluck onset", "version": "0.1.0" }
+  ],
+  "tempo": { "bpm": 174.0 },
+  "beats": [],
+  "stems": [
+    { "id": "stem-vocals", "kind": "vocals", "path": "stems/vocals.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" },
+    { "id": "stem-drums", "kind": "drums", "path": "stems/drums.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" },
+    { "id": "stem-bass", "kind": "bass", "path": "stems/bass.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" },
+    { "id": "stem-guitar", "kind": "guitar", "path": "stems/guitar.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" },
+    { "id": "stem-piano", "kind": "piano", "path": "stems/piano.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" },
+    { "id": "stem-other", "kind": "other", "path": "stems/other.wav", "method": "demucs-infer 4.2.2 / htdemucs_6s" }
+  ],
+  "events": [
+    {
+      "id": "ev-guitar-000001",
+      "type": "onset",
+      "detectorId": "det-pluck-onset",
+      "endKind": "instantaneous",
+      "startSec": 1.5,
+      "confidence": 0.82,
+      "source": { "stemId": "stem-guitar", "instrument": "guitar" }
+    },
+    {
+      "id": "ev-piano-000001",
+      "type": "onset",
+      "detectorId": "det-pluck-onset",
+      "endKind": "instantaneous",
+      "startSec": 2.25,
+      "confidence": 0.61,
+      "source": { "stemId": "stem-piano", "instrument": "piano" }
+    }
+  ]
+}
