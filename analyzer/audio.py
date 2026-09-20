@@ -23,6 +23,11 @@ class AudioInfo(NamedTuple):
     duration_sec: float
     sample_rate: int
     channels: int
+    #: Size on disk. Part of the stem cache key beside the hash: two files of the same
+    #: length can differ, but a differing length is a cheap, independent contradiction,
+    #: and recording it costs a `stat`. Defaulted so callers written before the stem cache
+    #: existed - including the document-assembly tests - still construct a valid info.
+    size_bytes: int = 0
 
 
 def sha256_file(path) -> str:
@@ -34,11 +39,22 @@ def sha256_file(path) -> str:
     return digest.hexdigest()
 
 
-def probe(path) -> AudioInfo:
-    """Read an audio file's metadata and hash it. Never modifies the file."""
+def locate(path) -> Path:
+    """Resolve a source audio path and confirm it is there, without reading it.
+
+    Separate from `probe` because the asset root is derived from the path alone, and that
+    has to happen before anything is hashed or decoded - the overwrite guard depends on
+    knowing where the run would write.
+    """
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError("audio file does not exist: {0}".format(path))
+    return path
+
+
+def probe(path) -> AudioInfo:
+    """Read an audio file's metadata and hash it. Never modifies the file."""
+    path = locate(path)
     info = sf.info(str(path))
     return AudioInfo(
         path=path,
@@ -46,6 +62,7 @@ def probe(path) -> AudioInfo:
         duration_sec=float(info.duration),
         sample_rate=int(info.samplerate),
         channels=int(info.channels),
+        size_bytes=path.stat().st_size,
     )
 
 

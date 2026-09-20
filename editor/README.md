@@ -20,7 +20,8 @@ Show the song on a timeline, with guide layers drawn over it:
 - beat grid, derived from tempo and offset
 - onsets
 - note starts, ends and durations
-- stems, individually viewable and individually audible
+- stems, individually viewable and individually audible - Mix plus vocals, drums, bass,
+  guitar, piano and other
 - analysis events, filterable by type, source and confidence
 
 and let the author place, move, retime and delete notes against that guide - with
@@ -154,6 +155,23 @@ The Analyzer already separates the recording and records what it produced in
 `analysis.stems[]`. The Editor reads that and lets an author listen to one part at a time.
 **Nothing here runs Demucs**; the Editor only ever plays files that already exist.
 
+An ordinary analysis now gives seven rows:
+
+```text
+Mix   Vocals   Drums   Bass   Guitar   Piano   Other
+```
+
+`Mix` is the source recording, streamed from wherever it lives - it is never copied
+anywhere. The six stems are the files the Analyzer wrote into the song's asset root beside
+that recording, and the Editor finds them the way it always has: each `stems[].path` is
+resolved against the Analysis document that named it, so there is nothing here that knows
+about asset roots, drives or directory names. A project whose analysis has four stems gets
+five rows; one with none gets no mixer at all.
+
+Row names come from each stem's `kind`, capitalised. `kind` is an open vocabulary, so a
+separator that yields something this list has never heard of gets a row anyway rather than
+being dropped.
+
 Four things are kept apart, and the separation is the design:
 
 | | Where it lives | What it knows |
@@ -169,26 +187,26 @@ sources up with that. So the playhead, Follow, the note clicks, seeking, the arr
 and the rate menu all go on reading exactly the clock they always read, and a stem cannot
 disagree with the playhead about where the music is.
 
-#### Solo, Mute and the original
+#### Solo, Mute and the Mix
 
 The ordinary rules of a mixing desk:
 
     with anything soloed:  a track is heard if it is soloed and not muted
     with nothing soloed:   a track is heard if it is not muted
 
-and then one extra clause: **the original steps aside as soon as a stem is brought in.**
-Stems sum back to the recording they came from, so leaving the original playing underneath
-a soloed bass would double the bass and comb-filter it. Rather than making an author
-remember to silence it first, bringing a stem in silences it for them.
+and then one extra clause: **the Mix steps aside as soon as a stem is brought in.** Stems
+sum back to the recording they came from, so leaving the Mix playing underneath a soloed
+bass would double the bass and comb-filter it. Rather than making an author remember to
+silence it first, bringing a stem in silences it for them.
 
-The original is a row in the mixer rather than a mode, and it **starts soloed** - which is
-why a project opens sounding exactly as it always did, and why switching to the bass and
-switching back are the same gesture. Solo here reads as "this is what I am listening to".
+The Mix is a row in the mixer rather than a mode, and it **starts soloed** - which is why a
+project opens sounding exactly as it always did, and why switching to the bass and switching
+back are the same gesture. Solo here reads as "this is what I am listening to".
 Several stems may be soloed at once. Mute beats Solo. A fader is loudness only: pulling a
 soloed stem to zero gives silence, never a surprise return of the full mix. `Back to the
-song` restores the original from wherever the author has got to, leaving their balance
-alone. The Editor never reaches a state with nothing soloed - dropping the last solo hands
-the original back - because that state would route every unmuted stem at once.
+song` restores the Mix from wherever the author has got to, leaving their balance alone. The
+Editor never reaches a state with nothing soloed - dropping the last solo hands the Mix back
+- because that state would route every unmuted stem at once.
 
 The toolbar's volume and mute stay the master over all of it. The note clicks keep their
 own gain and are untouched, which is what makes charting against a quiet stem work.

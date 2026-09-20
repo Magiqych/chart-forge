@@ -77,6 +77,31 @@ schemas.
 See [docs/data-flow.md](docs/data-flow.md) for the detailed description, and
 [docs/terminology.md](docs/terminology.md) for the vocabulary used throughout.
 
+## Where the files live
+
+The documents are small and the audio is not, and the two are kept on different terms.
+
+**Heavy assets follow the source audio.** One run of the Analyzer separates a song into six
+stems, which together come to several times the size of the recording, so they are written
+beside the recording rather than anywhere near this repository:
+
+```text
+C:\Users\me\Music\Album\
+├─ Song.wav                  the recording - never copied, never moved
+└─ .chart-forge\song\        this song's asset root
+   ├─ analysis.json          the Analysis document
+   ├─ asset-manifest.json    what is stored here and how it was made
+   └─ stems\                 vocals, drums, bass, guitar, piano, other
+```
+
+`analysis.json` is the single point of reference: it names its audio and its stems by paths
+relative to itself, so a Project records one path into the asset root and no list of stems.
+A Project is a few kilobytes and can live anywhere - including on a different drive from the
+assets, which is the one case where the reference has to be absolute.
+
+The repository itself holds only source, tests, docs, schemas and examples. No audio, no
+stems, no analysis caches; see [.gitignore](.gitignore).
+
 ## Directory structure
 
 ```text
@@ -126,7 +151,15 @@ install step and no build - so it starts in a second; the Editor builds a Tauri 
 shell and needs Node.js and the Rust toolchain. See [`editor/README.md`](editor/README.md)
 and [`player/README.md`](player/README.md).
 
-The Analyzer is a Python package run from the repository's own virtual environment; see
+The Analyzer is a Python package run from the repository's own virtual environment:
+
+```powershell
+python -m analyzer "C:\path	o\Song.wav"
+```
+
+One run separates the song into six stems with `htdemucs_6s` - vocals, drums, bass, guitar,
+piano and other - and analyses them, writing everything beside the recording. Re-running the
+same song reuses the stems rather than separating again. See
 [`analyzer/README.md`](analyzer/README.md).
 
 ## Target format

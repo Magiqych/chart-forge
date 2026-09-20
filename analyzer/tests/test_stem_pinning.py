@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from analyzer import cli, document, separation
+from analyzer import assets, cli, document, separation
 
 SR = 44100
 DURATION = 2.0
@@ -271,15 +271,23 @@ class TestOutputTargetsWithPinnedStems(unittest.TestCase):
 
 
 class TestStemReferencePath(unittest.TestCase):
+    """How a stem is addressed from analysis.json.
+
+    The CLI used to own this and now asks `assets.reference`, which is the same rule
+    applied to the source audio and to the manifest as well. These cases follow it there
+    rather than being deleted: they are statements about the Analysis document's stem
+    paths, and those have not changed.
+    """
+
     def test_same_tree_gives_a_relative_posix_path(self):
         out = Path(tempfile.gettempdir()) / "run"
         stem = out / "stems" / "drums.wav"
-        self.assertEqual(cli.stem_reference_path(stem, out), "stems/drums.wav")
+        self.assertEqual(assets.reference(stem, out), "stems/drums.wav")
 
     def test_sibling_directory_gives_a_relative_path(self):
         base = Path(tempfile.gettempdir())
         self.assertEqual(
-            cli.stem_reference_path(base / "pinned" / "drums.wav", base / "run"),
+            assets.reference(base / "pinned" / "drums.wav", base / "run"),
             "../pinned/drums.wav")
 
 
@@ -289,7 +297,7 @@ class TestCliArguments(unittest.TestCase):
 
         parser = argparse.ArgumentParser()
         parser.add_argument("audio")
-        parser.add_argument("--output-dir", required=True)
+        parser.add_argument("--output-dir", default=None)
         parser.add_argument("--stems-dir", default=None)
         args = parser.parse_args(["song.flac", "--output-dir", "out"])
         self.assertIsNone(args.stems_dir)

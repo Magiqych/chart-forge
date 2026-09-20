@@ -14,7 +14,7 @@ import {
   emptyChart, projectChart, serializeChart, ChartError, type ChartState,
 } from "../core/chart";
 import { readSnapSettings, type SnapSettings } from "../core/snap";
-import type { StemAvailability } from "../core/stemMixer";
+import { stemLabelFor, type StemAvailability } from "../core/stemMixer";
 import {
   directoryOf, relativePath,
   ProjectLoadError, type LoadFailureKind, type ProjectSummary,
@@ -177,7 +177,7 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
         url = null;
       }
     }
-    stems.push({ id: stem.id, label: stemLabel(stem), url });
+    stems.push({ id: stem.id, label: stemLabelFor(stem.kind, stem.id), url });
   }
 
   // A project without a chart is a project where authoring has not started, so the
@@ -226,19 +226,6 @@ export async function openProject(projectPath: string): Promise<OpenedProject> {
     stems,
     snap: readSnapSettings(loaded.project["editor"]),
   };
-}
-
-/**
- * What to call a stem in the mixer.
- *
- * `kind` is an open vocabulary, so this capitalises whatever the separator produced
- * rather than mapping a fixed set - a run that yields `piano` gets Piano without anyone
- * having to add it here. The id is the fallback for a stem with no kind at all.
- */
-function stemLabel(stem: RawLoadedStem): string {
-  const kind = stem.kind.trim();
-  if (kind === "") return stem.id;
-  return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
 /**

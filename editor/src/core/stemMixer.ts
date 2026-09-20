@@ -34,6 +34,21 @@
  */
 export const ORIGINAL_TRACK_ID = "original";
 
+/**
+ * What that track is called on screen.
+ *
+ * **Mix**, because that is the word for it everywhere else the project talks about audio:
+ * the Analyzer weighs each stem "against the mix" and runs beat tracking on "the full
+ * mix", and the six stems are what the mix was taken apart into. A row called Original
+ * beside six called Vocals, Drums, Bass, Guitar, Piano and Other reads as a seventh part
+ * rather than as the whole they came from.
+ *
+ * Exported so the panel and the "what am I hearing" line cannot drift apart, and kept
+ * separate from `ORIGINAL_TRACK_ID` on purpose: the id is data the engine keys on and
+ * renaming it would mean nothing to the author, while this is the only part they read.
+ */
+export const ORIGINAL_TRACK_LABEL = "Mix";
+
 export interface StemTrackState {
   readonly id: string;
   /** 0 to 1. A fader, not an on/off - `muted` is the on/off. */
@@ -62,6 +77,21 @@ export interface StemAvailability {
   readonly label: string;
   /** Absent when the file could not be resolved; the row is shown but disabled. */
   readonly url: string | null;
+}
+
+/**
+ * What to call a separated stem in the mixer.
+ *
+ * The stem's `kind`, capitalised - so the six an ordinary run produces read as Vocals,
+ * Drums, Bass, Guitar, Piano and Other, and a separator that one day yields something else
+ * gets a sensible row without anyone editing a list. `kind` is an open vocabulary in the
+ * Analysis contract, and mapping a fixed set here would quietly drop everything outside it.
+ * The id is the fallback for a stem the document gave no kind at all.
+ */
+export function stemLabelFor(kind: string, id: string): string {
+  const trimmed = kind.trim();
+  if (trimmed === "") return id;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 export const DEFAULT_TRACK_VOLUME = 1;
@@ -285,5 +315,7 @@ export function describeListening(
 ): string {
   const stems = routedStemIds(state);
   if (stems.length > 0) return stems.map((id) => labels[id] ?? id).join(" + ");
-  return isOriginalAudible(state) ? (labels[ORIGINAL_TRACK_ID] ?? "Original") : "Silent";
+  return isOriginalAudible(state)
+    ? (labels[ORIGINAL_TRACK_ID] ?? ORIGINAL_TRACK_LABEL)
+    : "Silent";
 }

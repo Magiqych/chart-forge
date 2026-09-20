@@ -105,17 +105,120 @@ ordering are stable; event counts and boundaries move by a few percent between r
 ## Usage
 
 ```powershell
-# separate the audio, then analyse it (default)
+python -m analyzer "C:\Users\me\Music\Album\Song.wav"
+```
+
+That is the whole ordinary invocation. One run separates the audio into **six stems with
+`htdemucs_6s`** and analyses them; no flag is needed to ask for stems, and no flag is
+needed to say where they go.
+
+```powershell
+# write somewhere specific instead of the song's own asset root
 python -m analyzer <audio-file> --output-dir <directory>
 
 # reuse stems that already exist, skipping separation
-python -m analyzer <audio-file> --output-dir <directory> --stems-dir <existing-stems>
+python -m analyzer <audio-file> --stems-dir <existing-stems>
 ```
 
-Without `--stems-dir` the Analyzer separates the audio and writes
-`<output-dir>/stems/{vocals,drums,bass,guitar,piano,other}.wav` alongside
-`<output-dir>/analysis.json`. It refuses to overwrite anything it would write, so
-re-running means choosing a fresh output directory.
+### Where the output goes
+
+**Heavy assets follow the source audio.** Six stems come to several times the size of the
+recording, so they belong on the drive that already holds the music - never on whichever
+drive this repository happens to be checked out on. With no `--output-dir` the run derives
+its own directory beside the audio:
+
+```text
+C:\Users\me\Music\Album\
+├─ Song.wav                       the recording, untouched and never copied
+└─ .chart-forge\
+   └─ song\                       the song's asset root
+      ├─ analysis.json            the Analysis document
+      ├─ asset-manifest.json      what is here and how it was made
+      └─ stems\
+         ├─ vocals.wav  drums.wav  bass.wav
+         └─ guitar.wav  piano.wav  other.wav
+```
+
+The directory name comes from the file name, lower-cased with runs of punctuation and
+spaces collapsed to a hyphen: `RoomU 149.wav` becomes `roomu-149`. Letters are kept
+whatever the script, so a Japanese title keeps its title rather than slugifying to nothing.
+
+**The source audio is not copied.** It stays where you put it and remains the only
+original; `analysis.json` reaches back up to it with a relative path (`../../Song.wav`), so
+the whole asset root can be moved along with the recording.
+
+**The stems are not temporary.** They are the song's assets for as long as the chart is
+being authored. Nothing deletes them - not closing the Editor, not re-running the Analyzer.
+
+### Explicit output directories
+
+Precedence is: **what you asked for, then the song's own asset root.**
+
+| | |
+| --- | --- |
+| `--output-dir DIR` given | the run writes into `DIR`, exactly as it always did |
+| omitted | the run writes into the source-adjacent asset root above |
+
+The difference between the two is what happens to files already there. **A song's own asset
+root is the Analyzer's to bring up to date**: the stems are reused or re-separated, and
+`analysis.json` is replaced. Nobody types that path - it is a per-song directory under a
+hidden `.chart-forge` beside the recording - so anything in it was put there by this tool,
+including the debris of a run that failed halfway, and replacing that is how the ordinary
+one-argument command keeps working after a crash instead of refusing forever.
+
+**A directory you named is yours**, and nothing in it is overwritten: the run refuses to
+start if anything it would write already exists, so re-running into an explicit directory
+means choosing a fresh one. The one exception is a directory that already carries an
+`asset-manifest.json` this tool wrote, because then it *is* an asset root - so
+`--output-dir <an existing asset root>` behaves exactly like the default rather than being a
+second set of rules.
+
+### Re-running the same song
+
+Running the Analyzer twice over one recording does **not** separate it twice. Before
+separating, the run checks the asset manifest against the recording in front of it. Stems
+are reused only when every one of these still holds:
+
+- the source audio is byte-for-byte the same - both its SHA-256 and its size;
+- the checkpoint asked for is the checkpoint that produced them;
+- the separator is the same package at the same version, with the same settings;
+- the manifest lists **exactly** the stems this model produces;
+- and every one of those files is present, large enough to be audio, and still hashes to
+  what was recorded.
+
+Anything else means separating again. Two consequences worth stating plainly:
+
+**`guitar.wav exists` is not a valid cache.** A run interrupted during separation leaves
+files behind, and a truncated stem reads as music that stops early rather than as an error,
+so the hashes are checked and not just the names. Five of six stems - `other.wav` missing -
+is not a six-stem cache either, whichever side the gap is on: a file the manifest never
+listed has nothing vouching for where it came from, and a listed file that is not on disk
+is simply not there.
+
+**Pinned stems are never a cache.** A previous run's `--stems-dir` is recorded in the
+manifest as `mode: supplied`, and those stems are never adopted as though this Analyzer had
+generated them - their origin was unverifiable when they were pinned, and reusing them
+silently would turn that into a provenance claim.
+
+A reused run says so in the document: `generator.parameters.separation.mode` is `reused`
+with `separationRun: false`, naming the checkpoint and version that were verified. Measured
+on a 195-second track, separation drops from 18.3 s to 0.001 s.
+
+The manifest is written as soon as the stems are settled, **before** the detectors run. A
+run that separates and then fails in a later branch has still produced six usable stems,
+and the next attempt skips straight past them.
+
+### Which files go where
+
+| | |
+| --- | --- |
+| source audio, stems, asset manifest, analysis document | beside the recording, on the music drive |
+| source code, tests, docs, schemas | this repository |
+| project JSON | anywhere; it is a few kilobytes |
+
+The repository never holds audio. `.gitignore` covers `*.wav`, `stems/` and
+`.chart-forge/`, so an `--output-dir` aimed into the checkout cannot be committed by
+accident.
 
 ### Which model, and why six sources
 
@@ -154,8 +257,9 @@ existed still works**: the run simply has no guitar or piano branch. Present-but
 stems are validated exactly like the rest - same sample rate, channel count and length.
 
 The directory is **read only**. Nothing is written into it, and the stems are not copied
-into the output directory - the run writes only `analysis.json`, and `stems[].path`
-refers to where the stems actually live.
+into the output directory - the run writes only `analysis.json` and its asset manifest, and
+`stems[].path` refers to where the stems actually live. The manifest records the pin as
+`mode: supplied`, which is also what stops a later run adopting those stems as a cache.
 
 That has a consequence worth being explicit about. `stems[].sha256` is the stable
 identity of a stem's content: it does not change when files move, and it is what tells
@@ -211,12 +315,101 @@ a consumer can branch on:
 { "mode": "generated", "separationRun": true, "package": "demucs-infer",
   "version": "4.2.2", "model": "htdemucs", "device": "cuda:0" }
 
+{ "mode": "reused", "separationRun": false, "package": "demucs-infer",
+  "version": "4.2.2", "model": "htdemucs_6s", "device": "cuda:0" }
+
 { "mode": "supplied", "separationRun": false, "stemsDir": "..." }
 ```
 
-For supplied stems the Analyzer records that it did not produce them and cannot verify
-what did. Validation confirms the stems are usable and plausibly belong to the audio; it
-cannot prove they were separated from it.
+Three modes, because they are three different claims:
+
+| | |
+| --- | --- |
+| `generated` | separation ran during this invocation |
+| `reused` | this Analyzer generated these stems earlier, and the source, checkpoint, version, settings and every stem hash were re-verified before they were adopted |
+| `supplied` | the stems came from outside and their origin is unverifiable |
+
+`reused` names the checkpoint and the version because both were checked, not assumed - the
+only thing that stops being true relative to `generated` is that separation ran this time.
+For supplied stems the Analyzer records that it did not produce them and cannot verify what
+did. Validation confirms the stems are usable and plausibly belong to the audio; it cannot
+prove they were separated from it.
+
+## How a project and the Editor reach these assets
+
+There is one point of reference, and it is `analysis.json`. That was already true and has
+not changed: the Editor resolves `audio.path` and every `stems[].path` **against the
+Analysis document that names them**, so the asset root is simply the directory that
+document lives in, and nothing needs to be told about it separately.
+
+A Project therefore records one path into the asset root and nothing more:
+
+```json
+{
+  "version": "0.1.0",
+  "name": "Room U149",
+  "audio": { "path": "C:\Users\me\Music\Album\Song.wav", "durationSec": 194.8 },
+  "analysis": { "kind": "file", "path": "C:\Users\me\Music\Album\.chart-forge\song\analysis.json" }
+}
+```
+
+No `assetRoot` field, and above all **no list of six stem paths**. Six copies of the same
+information is six things to keep in step; the document that already names them is the one
+place they are written down.
+
+Relative paths are preferred and used wherever one exists. A project on `D:` referring to
+assets on `C:` is the case where one does not: Windows has no relative path between two
+drives, so the reference falls back to absolute. That is one absolute path, at the boundary
+between the drives, with everything inside the asset root staying relative.
+
+A project file is a few kilobytes, so it can live wherever suits - beside the other projects
+on the small drive is fine:
+
+```text
+D:\10.repo\chart-forge-work\projects\roomu-149.project.json   ->  C:\...\.chart-forge\roomu-149\
+```
+
+### Mix and the six stems in the Editor
+
+The Editor's mixer offers seven things to listen to: **Mix**, then Vocals, Drums, Bass,
+Guitar, Piano and Other. Each has a fader, Mute and Solo, and several can be soloed at once -
+"guitar and piano together" is one gesture.
+
+Mix is the source recording itself, streamed from where it lives; it is never copied into the
+asset root. The stems are decoded through Web Audio, and only when one is first actually
+listened to, so opening a project costs nothing until the mixer is used. Every stem is
+scheduled on one audio clock and lined up with the transport, so play, pause, seek and the
+rate menu move all of them together - and Mix steps aside as soon as a stem is brought in,
+because playing the whole mix underneath one of its own parts comb-filters that part.
+
+The row labels come from each stem's `kind`, capitalised. `kind` is an open vocabulary in the
+Analysis contract, so a separator that one day yields something else gets a row without any
+code being changed.
+
+### Guitar Guide and Piano Guide
+
+These are guide **layers over the Analysis events**, not separate audio paths. The Analyzer
+detects plucked-string attacks in `stems/guitar.wav` and `stems/piano.wav` and writes them as
+events carrying `source.stemId`; the Editor draws each event in the lane named for its stem
+and lets the author snap to it. There is no guitar-specific path and no piano-specific path
+anywhere - one resolver, one asset root, and a lane per stem kind - which is what makes bass,
+drums or vocals guides a matter of adding a detector rather than another special case.
+
+### Older projects
+
+Nothing about an existing project is migrated, and nothing needs to be. The rules a project
+is read by have not changed, so a project written before asset roots existed goes on loading
+exactly as it did:
+
+| | |
+| --- | --- |
+| no stems at all | the mixer is simply absent, which it always was |
+| four stems only | four rows plus Mix; the guitar and piano guides are empty |
+| stems in an old `runs/` tree | resolved from its own analysis document, as before |
+| an absolute `audio.path` | still accepted - the contract allows absolute or relative |
+
+The new layout is the default for **new** analyses. An old project adopts it by being
+re-analysed, when and if its author wants that.
 
 ## Current pipeline
 
