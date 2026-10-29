@@ -247,8 +247,9 @@ repository. Warm model load is 0.431 s; the first construction including downloa
 
 DBN post-processing is **off**. Beyond the published finding that the DBN's
 tempo-continuity prior hurts on expressive material, `dbn=True` would pull in madmom,
-whose pretrained models are CC BY-NC-SA licensed while the rest of this stack is
-permissive.
+whose pretrained models are CC BY-NC-SA licensed. The rest of the stack is not uniformly
+permissive either: the terms of the Demucs separation weights are unclear upstream. See
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 ### Synthetic test
 

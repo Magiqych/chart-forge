@@ -107,6 +107,8 @@ stems, no analysis caches; see [.gitignore](.gitignore).
 ```text
 chart-forge/
 ├─ README.md                     this file
+├─ LICENSE                       MIT License for Chart Forge's own work
+├─ THIRD_PARTY_NOTICES.md        dependency and model licenses; what MIT does not cover
 ├─ CLAUDE.md                     working rules for agents/contributors in this repo
 ├─ .gitignore
 │
@@ -188,3 +190,26 @@ needed one, and only for itself. The Editor picked React and Tauri; the Analyzer
 Python package; the Player deliberately picked nothing at all and is Node's standard
 library and a browser. Nothing binds the three together except the documents in
 [`schemas/`](schemas/). See [CLAUDE.md](CLAUDE.md).
+
+## License
+
+Chart Forge's original source code, JSON Schemas and documentation are released under the
+[MIT License](LICENSE). Copyright (c) 2026 Magiqych.
+
+That license covers Chart Forge's own work and nothing else:
+
+- **Third-party content is not included.** The MIT License grants no rights in songs,
+  recordings, lyrics, images, game assets, trademarks or any other material owned by
+  others, including material you load into Chart Forge. Stems separated from a recording
+  remain subject to the rights in that recording.
+- **Your charts are yours.** Chart Forge claims no rights in the charts you author with
+  it; in principle they belong to their authors. Any rights others hold in the underlying
+  music or game remain theirs.
+- **Unofficial.** Chart Forge is an independent project. It is not affiliated with,
+  endorsed by or sponsored by the developers, publishers or rights holders of any game,
+  including *THE iDOLM@STER CINDERELLA GIRLS Starlight Stage*. Game titles and trademarks
+  belong to their owners and are named here only to describe compatibility.
+- **Dependencies and AI models keep their own licenses.** Libraries and model weights are
+  used under their own terms, not the MIT License. Some may be restricted: the terms of the
+  Demucs weights the Analyzer uses by default are unclear upstream and likely
+  non-commercial. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
