@@ -90,6 +90,10 @@ Only the model a run actually uses is fetched; `htdemucs` downloads nothing unle
 
 torchcrepe is the exception: its weights ship inside the wheel, so it downloads nothing.
 
+None of these weights are covered by Chart Forge's MIT License, and their terms differ: the
+Demucs weights in particular are not clearly licensed upstream and are likely
+non-commercial. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
 The cache is shared between environments on one machine, so a second environment on the
 same machine will not re-download. A genuinely fresh machine needs about 157 MiB and
 network access on the first run.
